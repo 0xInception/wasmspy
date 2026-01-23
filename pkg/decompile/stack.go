@@ -1,8 +1,6 @@
 package decompile
 
 import (
-	"fmt"
-
 	"github.com/0xInception/wasmspy/pkg/wasm"
 )
 
@@ -23,7 +21,7 @@ func Analyze(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) *Analysis {
 		var err error
 		stack, err = simulateInstr(instr, stack, locals, fn, module)
 		if err != nil {
-			a.Errors = append(a.Errors, fmt.Errorf("offset 0x%x: %w", instr.Offset, err))
+			a.Errors = append(a.Errors, err)
 		}
 
 		a.Frames = append(a.Frames, Frame{
@@ -71,7 +69,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 	case wasm.OpLocalGet:
 		idx := getU32(instr.Immediates, 0)
 		if int(idx) >= len(locals) {
-			return stack, fmt.Errorf("local index %d out of bounds", idx)
+			return stack, newError(ErrInvalidIndex, instr.Offset, instr.Name, "local index %d out of bounds (have %d)", idx, len(locals))
 		}
 		stack = append(stack, &Value{
 			Type:   locals[idx].Type,
@@ -82,7 +80,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 	case wasm.OpLocalSet:
 		idx := getU32(instr.Immediates, 0)
 		if len(stack) < 1 {
-			return stack, fmt.Errorf("stack underflow")
+			return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need 1 value, have %d", len(stack))
 		}
 		val := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -93,7 +91,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 	case wasm.OpLocalTee:
 		idx := getU32(instr.Immediates, 0)
 		if len(stack) < 1 {
-			return stack, fmt.Errorf("stack underflow")
+			return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need 1 value, have %d", len(stack))
 		}
 		val := stack[len(stack)-1]
 		if int(idx) < len(locals) {
@@ -114,7 +112,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 
 	case wasm.OpGlobalSet:
 		if len(stack) < 1 {
-			return stack, fmt.Errorf("stack underflow")
+			return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need 1 value, have %d", len(stack))
 		}
 		stack = stack[:len(stack)-1]
 
@@ -156,7 +154,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 		}
 		if sig != nil {
 			if len(stack) < len(sig.Params) {
-				return stack, fmt.Errorf("stack underflow for call")
+				return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need %d values, have %d", len(sig.Params), len(stack))
 			}
 			inputs := stack[len(stack)-len(sig.Params):]
 			stack = stack[:len(stack)-len(sig.Params)]
@@ -176,12 +174,12 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 			sig = &module.Types[typeIdx]
 		}
 		if len(stack) < 1 {
-			return stack, fmt.Errorf("stack underflow for call_indirect")
+			return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need table index, have %d", len(stack))
 		}
 		stack = stack[:len(stack)-1]
 		if sig != nil {
 			if len(stack) < len(sig.Params) {
-				return stack, fmt.Errorf("stack underflow for call_indirect")
+				return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need %d values, have %d", len(sig.Params), len(stack))
 			}
 			inputs := stack[len(stack)-len(sig.Params):]
 			stack = stack[:len(stack)-len(sig.Params)]
@@ -198,7 +196,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 		sig, ok := OpSignatures[instr.Opcode]
 		if ok {
 			if len(stack) < len(sig.Inputs) {
-				return stack, fmt.Errorf("stack underflow: need %d, have %d", len(sig.Inputs), len(stack))
+				return stack, newError(ErrStackUnderflow, instr.Offset, instr.Name, "need %d values, have %d", len(sig.Inputs), len(stack))
 			}
 			inputs := stack[len(stack)-len(sig.Inputs):]
 			stack = stack[:len(stack)-len(sig.Inputs)]
