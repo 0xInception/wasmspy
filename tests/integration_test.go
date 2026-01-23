@@ -7,6 +7,15 @@ import (
 	"github.com/0xInception/wasmspy/pkg/wasm"
 )
 
+func getSection(mod *wasm.Module, id wasm.SectionID) *wasm.Section {
+	for i := range mod.Sections {
+		if mod.Sections[i].ID == id {
+			return &mod.Sections[i]
+		}
+	}
+	return nil
+}
+
 func TestParseAndDisassembleRealFile(t *testing.T) {
 	path := filepath.Join("testdata", "add.wasm")
 
@@ -49,4 +58,190 @@ func TestParseAndDisassembleRealFile(t *testing.T) {
 			t.Errorf("Instruction %d: expected %s, got %s", i, want, got)
 		}
 	}
+}
+
+func TestParseAllSections(t *testing.T) {
+	path := filepath.Join("testdata", "add.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("Failed to parse file: %v", err)
+	}
+
+	typeSec := getSection(mod, wasm.SectionType)
+	if typeSec == nil {
+		t.Fatal("missing type section")
+	}
+	types, err := wasm.ParseTypeSection(typeSec.Content, int(typeSec.Offset))
+	if err != nil {
+		t.Fatalf("failed to parse type section: %v", err)
+	}
+
+	funcSec := getSection(mod, wasm.SectionFunction)
+	if funcSec == nil {
+		t.Fatal("missing function section")
+	}
+	funcIndices, err := wasm.ParseFunctionSection(funcSec.Content, int(funcSec.Offset))
+	if err != nil {
+		t.Fatalf("failed to parse function section: %v", err)
+	}
+
+	var exports []wasm.Export
+	exportSec := getSection(mod, wasm.SectionExport)
+	if exportSec != nil {
+		exports, err = wasm.ParseExportSection(exportSec.Content, int(exportSec.Offset))
+		if err != nil {
+			t.Fatalf("failed to parse export section: %v", err)
+		}
+	}
+
+	codeSec := getSection(mod, wasm.SectionCode)
+	if codeSec == nil {
+		t.Fatal("missing code section")
+	}
+	bodies, err := wasm.ParseCodeSection(codeSec.Content, int(codeSec.Offset))
+	if err != nil {
+		t.Fatalf("failed to parse code section: %v", err)
+	}
+
+	t.Logf("Types: %d", len(types))
+	for i, typ := range types {
+		t.Logf("  type[%d] = %s", i, typ.String())
+	}
+
+	t.Logf("Functions: %d", len(funcIndices))
+	for i, typeIdx := range funcIndices {
+		t.Logf("  func[%d] -> type[%d] = %s", i, typeIdx, types[typeIdx].String())
+	}
+
+	t.Logf("Exports: %d", len(exports))
+	for _, exp := range exports {
+		if exp.Kind == wasm.ExportFunc {
+			typeIdx := funcIndices[exp.Index]
+			t.Logf("  export %q = func[%d] %s", exp.Name, exp.Index, types[typeIdx].String())
+		}
+	}
+
+	t.Logf("Code bodies: %d", len(bodies))
+	for i, body := range bodies {
+		t.Logf("  func[%d]: %d instructions", i, len(body.Instructions))
+	}
+}
+
+func TestResolve(t *testing.T) {
+	path := filepath.Join("testdata", "add2.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rm, err := wasm.Resolve(mod)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	if len(rm.Types) != 1 {
+		t.Errorf("expected 1 type, got %d", len(rm.Types))
+	}
+
+	if len(rm.Functions) != 1 {
+		t.Errorf("expected 1 function, got %d", len(rm.Functions))
+	}
+
+	fn := rm.GetFunctionByName("add")
+	if fn == nil {
+		t.Fatal("function 'add' not found")
+	}
+
+	t.Logf("Function: %s", fn.Name)
+	t.Logf("  Index: %d", fn.Index)
+	t.Logf("  Type: %s", fn.Type.String())
+	t.Logf("  Imported: %v", fn.Imported)
+	t.Logf("  Instructions: %d", len(fn.Body.Instructions))
+
+	for _, instr := range fn.Body.Instructions {
+		t.Logf("    %s %v", instr.Name, instr.Immediates)
+	}
+
+	if fn.Type.String() != "(func (param i32 i32) (result i32))" {
+		t.Errorf("unexpected type: %s", fn.Type.String())
+	}
+}
+
+func TestResolveWithImports(t *testing.T) {
+	path := filepath.Join("testdata", "with_import.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rm, err := wasm.Resolve(mod)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	if len(rm.Functions) != 2 {
+		t.Fatalf("expected 2 functions, got %d", len(rm.Functions))
+	}
+
+	t.Logf("Functions:")
+	for _, fn := range rm.Functions {
+		t.Logf("  [%d] %s - %s (imported=%v)", fn.Index, fn.Name, fn.Type.String(), fn.Imported)
+	}
+
+	if rm.Functions[0].Index != 0 {
+		t.Errorf("func 0 index: got %d", rm.Functions[0].Index)
+	}
+	if !rm.Functions[0].Imported {
+		t.Error("func 0 should be imported")
+	}
+	if rm.Functions[0].Name != "env.log" {
+		t.Errorf("func 0 name: got %s", rm.Functions[0].Name)
+	}
+
+	if rm.Functions[1].Index != 1 {
+		t.Errorf("func 1 index: got %d", rm.Functions[1].Index)
+	}
+	if rm.Functions[1].Imported {
+		t.Error("func 1 should not be imported")
+	}
+	if rm.Functions[1].Name != "main" {
+		t.Errorf("func 1 name: got %s, want 'main'", rm.Functions[1].Name)
+	}
+}
+
+func TestWATOutput(t *testing.T) {
+	path := filepath.Join("testdata", "add2.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rm, err := wasm.Resolve(mod)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	wat := rm.ToWAT()
+	t.Logf("WAT output:\n%s", wat)
+}
+
+func TestWATOutputWithImports(t *testing.T) {
+	path := filepath.Join("testdata", "with_import.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rm, err := wasm.Resolve(mod)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	wat := rm.ToWAT()
+	t.Logf("WAT output:\n%s", wat)
 }
