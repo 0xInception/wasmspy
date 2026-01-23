@@ -1,0 +1,19 @@
+# 1. Ignore everything (files and folders)
+*
+
+# 2. Re-include all directories recursively
+!*/
+
+# 3. Re-ignore annoying directories
+.idea/
+.vscode/
+
+# 4. Re-include specific files
+!*.go
+!README.md
+!LICENSE
+!*.wat
+!*.wasm
+!.gitignore
+!go.mod
+!go.sum
