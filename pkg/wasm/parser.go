@@ -1,61 +1,105 @@
 package wasm
 
 import (
-	"bufio"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"os"
 )
 
+type parser struct {
+	data   []byte
+	offset int
+}
+
+func (p *parser) remaining() int {
+	return len(p.data) - p.offset
+}
+
+func (p *parser) readBytes(n int) ([]byte, error) {
+	if p.remaining() < n {
+		return nil, newError(ErrTruncated, int64(p.offset), "need %d bytes, have %d", n, p.remaining())
+	}
+	b := p.data[p.offset : p.offset+n]
+	p.offset += n
+	return b, nil
+}
+
+func (p *parser) readByte() (byte, error) {
+	if p.remaining() < 1 {
+		return 0, newError(ErrTruncated, int64(p.offset), "unexpected end of data")
+	}
+	b := p.data[p.offset]
+	p.offset++
+	return b, nil
+}
+
+func (p *parser) readU32() (uint32, error) {
+	val, n, err := ReadLEB128U32FromSlice(p.data[p.offset:])
+	if err != nil {
+		return 0, wrapError(ErrInvalidLEB128, int64(p.offset), err, "invalid leb128")
+	}
+	p.offset += n
+	return val, nil
+}
+
+func (p *parser) readS32() (int32, error) {
+	val, n, err := ReadLEB128S32FromSlice(p.data[p.offset:])
+	if err != nil {
+		return 0, wrapError(ErrInvalidLEB128, int64(p.offset), err, "invalid signed leb128")
+	}
+	p.offset += n
+	return val, nil
+}
+
 func ParseFile(path string) (*Module, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	r := bufio.NewReader(f)
-	return Parse(r)
+	return Parse(data)
 }
 
-func Parse(r *bufio.Reader) (*Module, error) {
+func Parse(data []byte) (*Module, error) {
+	p := &parser{data: data}
 	mod := &Module{}
 
 	// Magic Number: \0asm
-	magic := make([]byte, 4)
-	if _, err := io.ReadFull(r, magic); err != nil {
+	magic, err := p.readBytes(4)
+	if err != nil {
 		return nil, err
 	}
 	if string(magic) != "\x00asm" {
-		return nil, fmt.Errorf("invalid magic: %x", magic)
+		return nil, newError(ErrInvalidMagic, 0, "invalid magic number: %x", magic)
 	}
 
-	if err := binary.Read(r, binary.LittleEndian, &mod.Version); err != nil {
-		return nil, err
+	if p.remaining() < 4 {
+		return nil, newError(ErrTruncated, int64(p.offset), "missing version")
 	}
+	mod.Version = binary.LittleEndian.Uint32(p.data[p.offset:])
+	p.offset += 4
 
-	for {
-		idByte, err := r.ReadByte()
-		if err == io.EOF {
-			break
-		}
+	for p.remaining() > 0 {
+		sectionStart := p.offset
+
+		idByte, err := p.readByte()
 		if err != nil {
 			return nil, err
 		}
 
-		size, _, err := ReadLEB128U32(r)
+		size, err := p.readU32()
 		if err != nil {
 			return nil, err
 		}
 
-		content := make([]byte, size)
-		if _, err := io.ReadFull(r, content); err != nil {
-			return nil, err
+		if p.remaining() < int(size) {
+			return nil, newError(ErrSectionOverflow, int64(sectionStart), "section %d claims %d bytes, only %d available", idByte, size, p.remaining())
 		}
+
+		content, _ := p.readBytes(int(size))
 
 		mod.Sections = append(mod.Sections, Section{
 			ID:      SectionID(idByte),
+			Offset:  uint64(sectionStart),
 			Size:    size,
 			Content: content,
 		})
@@ -70,75 +114,66 @@ type LocalEntry struct {
 }
 
 type FunctionBody struct {
+	Offset       int
 	Locals       []LocalEntry
 	Instructions []Instruction
 }
 
-func ParseCodeSection(content []byte) ([]FunctionBody, error) {
-	cursor := 0
+func ParseCodeSection(content []byte, baseOffset int) ([]FunctionBody, error) {
+	p := &parser{data: content}
 
-	numBodies, bytesRead, err := ReadLEB128U32FromSlice(content[cursor:])
+	numBodies, err := p.readU32()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read code section vector size: %w", err)
+		return nil, wrapError(ErrInvalidSection, int64(baseOffset), err, "failed to read function count")
 	}
-	cursor += bytesRead
 
 	bodies := make([]FunctionBody, 0, numBodies)
 
 	for i := 0; i < int(numBodies); i++ {
-		if cursor >= len(content) {
-			return nil, fmt.Errorf("unexpected EOF while reading code section body %d", i)
-		}
+		funcOffset := baseOffset + p.offset
 
-		bodySize, bytesRead, err := ReadLEB128U32FromSlice(content[cursor:])
+		bodySize, err := p.readU32()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read body size for function %d: %w", i, err)
-		}
-		cursor += bytesRead
-
-		endOfBody := cursor + int(bodySize)
-		if endOfBody > len(content) {
-			return nil, fmt.Errorf("body size for function %d exceeds section bounds", i)
+			return nil, wrapError(ErrInvalidSection, int64(funcOffset), err, "failed to read body size for function %d", i)
 		}
 
-		rawBody := content[cursor:endOfBody]
+		if p.remaining() < int(bodySize) {
+			return nil, newError(ErrSectionOverflow, int64(funcOffset), "function %d body exceeds section bounds", i)
+		}
 
-		body, err := parseFunctionBody(rawBody)
+		bodyData, _ := p.readBytes(int(bodySize))
+
+		body, err := parseFunctionBody(bodyData, funcOffset)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse function %d: %w", i, err)
+			return nil, err
 		}
+		body.Offset = funcOffset
 
 		bodies = append(bodies, body)
-
-		cursor = endOfBody
 	}
 
 	return bodies, nil
 }
 
-func parseFunctionBody(rawBody []byte) (FunctionBody, error) {
-	localCursor := 0
+func parseFunctionBody(data []byte, baseOffset int) (FunctionBody, error) {
+	p := &parser{data: data}
 	var locals []LocalEntry
 
-	numLocalDecls, bytesRead, err := ReadLEB128U32FromSlice(rawBody[localCursor:])
+	numLocalDecls, err := p.readU32()
 	if err != nil {
-		return FunctionBody{}, fmt.Errorf("failed to read local declaration count: %w", err)
+		return FunctionBody{}, wrapError(ErrInvalidSection, int64(baseOffset+p.offset), err, "failed to read local count")
 	}
-	localCursor += bytesRead
 
 	for j := 0; j < int(numLocalDecls); j++ {
-		count, bytesRead, err := ReadLEB128U32FromSlice(rawBody[localCursor:])
+		count, err := p.readU32()
 		if err != nil {
-			return FunctionBody{}, fmt.Errorf("failed to read local count: %w", err)
-		}
-		localCursor += bytesRead
-
-		if localCursor >= len(rawBody) {
-			return FunctionBody{}, fmt.Errorf("unexpected EOF reading local type")
+			return FunctionBody{}, err
 		}
 
-		valType := rawBody[localCursor]
-		localCursor++
+		valType, err := p.readByte()
+		if err != nil {
+			return FunctionBody{}, newError(ErrTruncated, int64(baseOffset+p.offset), "unexpected end reading local type")
+		}
 
 		locals = append(locals, LocalEntry{
 			Count: count,
@@ -146,15 +181,24 @@ func parseFunctionBody(rawBody []byte) (FunctionBody, error) {
 		})
 	}
 
-	codeBytes := rawBody[localCursor:]
+	codeBytes := p.data[p.offset:]
+	codeOffset := baseOffset + p.offset
 
-	instrs, err := DisassembleCode(codeBytes)
+	instrs, err := DisassembleCode(codeBytes, codeOffset)
 	if err != nil {
-		return FunctionBody{}, fmt.Errorf("disassembly failed: %w", err)
+		return FunctionBody{}, err
 	}
 
 	return FunctionBody{
 		Locals:       locals,
 		Instructions: instrs,
 	}, nil
+}
+
+func ParseFromReader(r io.Reader) (*Module, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
 }

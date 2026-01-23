@@ -4,6 +4,7 @@ type Opcode byte
 
 const (
 	OpUnreachable Opcode = 0x00
+	OpNop         Opcode = 0x01
 	OpBlock       Opcode = 0x02
 	OpLoop        Opcode = 0x03
 	OpEnd         Opcode = 0x0b
@@ -22,6 +23,7 @@ const (
 
 var OpcodeNames = map[Opcode]string{
 	0x00: "unreachable",
+	0x01: "nop",
 	0x02: "block",
 	0x03: "loop",
 	0x0b: "end",

@@ -24,6 +24,7 @@ type Module struct {
 
 type Section struct {
 	ID      SectionID
+	Offset  uint64
 	Size    uint32
 	Content []byte
 }

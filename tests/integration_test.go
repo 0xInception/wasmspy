@@ -15,20 +15,18 @@ func TestParseAndDisassembleRealFile(t *testing.T) {
 		t.Fatalf("Failed to parse file: %v", err)
 	}
 
-	var codeContent []byte
-	foundCode := false
-	for _, s := range mod.Sections {
-		if s.ID == wasm.SectionCode {
-			codeContent = s.Content
-			foundCode = true
+	var codeSection *wasm.Section
+	for i := range mod.Sections {
+		if mod.Sections[i].ID == wasm.SectionCode {
+			codeSection = &mod.Sections[i]
 			break
 		}
 	}
-	if !foundCode {
+	if codeSection == nil {
 		t.Fatal("Could not find Code Section")
 	}
 
-	bodies, err := wasm.ParseCodeSection(codeContent)
+	bodies, err := wasm.ParseCodeSection(codeSection.Content, int(codeSection.Offset))
 	if err != nil {
 		t.Fatalf("Failed to parse code section: %v", err)
 	}

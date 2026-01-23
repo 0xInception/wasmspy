@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestDisassembleCodeError(t *testing.T) {
+	code := []byte{0x41} // i32.const without immediate
+
+	_, err := DisassembleCode(code, 0x100)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	t.Logf("Error: %v", err)
+
+	pe, ok := err.(*ParseError)
+	if !ok {
+		t.Fatalf("expected *ParseError, got %T", err)
+	}
+
+	t.Logf("Code: %d", pe.Code)
+	t.Logf("Offset: 0x%x", pe.Offset)
+
+	if pe.Code != ErrTruncated {
+		t.Errorf("expected ErrTruncated, got %d", pe.Code)
+	}
+}
+
 func TestDisassembleCode(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -27,21 +50,30 @@ func TestDisassembleCode(t *testing.T) {
 		{
 			name: "Instructions with Arguments",
 			input: []byte{
-				0x41, 0x0A, // i32.const 10
+				0x41, 0x0A,       // i32.const 10
 				0x41, 0x80, 0x01, // i32.const 128
-				0x20, 0x00, // local.get 0
+				0x20, 0x00,       // local.get 0
 			},
 			expected: []Instruction{
-				{Offset: 0, Opcode: OpI32Const, Name: "i32.const", Immediates: []any{uint32(10)}},
-				{Offset: 2, Opcode: OpI32Const, Name: "i32.const", Immediates: []any{uint32(128)}},
+				{Offset: 0, Opcode: OpI32Const, Name: "i32.const", Immediates: []any{int32(10)}},
+				{Offset: 2, Opcode: OpI32Const, Name: "i32.const", Immediates: []any{int32(128)}},
 				{Offset: 5, Opcode: OpLocalGet, Name: "local.get", Immediates: []any{uint32(0)}},
+			},
+		},
+		{
+			name: "Negative i32.const",
+			input: []byte{
+				0x41, 0x7f, // i32.const -1
+			},
+			expected: []Instruction{
+				{Offset: 0, Opcode: OpI32Const, Name: "i32.const", Immediates: []any{int32(-1)}},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := DisassembleCode(tt.input)
+			got, err := DisassembleCode(tt.input, 0)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
