@@ -1,16 +1,5 @@
 package wasm
 
-type LocalEntry struct {
-	Count uint32
-	Type  byte
-}
-
-type FunctionBody struct {
-	Offset       int
-	Locals       []LocalEntry
-	Instructions []Instruction
-}
-
 func ParseCodeSection(content []byte, baseOffset int) ([]FunctionBody, error) {
 	p := &parser{data: content}
 

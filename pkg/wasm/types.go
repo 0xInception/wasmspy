@@ -121,11 +121,40 @@ type GlobalType struct {
 }
 
 type Import struct {
-	Module string
-	Name   string
-	Kind   ImportKind
-	TypeIdx   uint32
-	Table     *Limits
-	Memory    *Limits
-	Global    *GlobalType
+	Module  string
+	Name    string
+	Kind    ImportKind
+	TypeIdx uint32
+	Table   *Limits
+	Memory  *Limits
+	Global  *GlobalType
+}
+
+type LocalEntry struct {
+	Count uint32
+	Type  byte
+}
+
+type FunctionBody struct {
+	Offset       int
+	Locals       []LocalEntry
+	Instructions []Instruction
+}
+
+type ResolvedModule struct {
+	Version   uint32
+	Types     []FuncType
+	Imports   []Import
+	Functions []ResolvedFunction
+	Memories  []Limits
+	Exports   []Export
+}
+
+type ResolvedFunction struct {
+	Index    uint32
+	Name     string
+	Type     *FuncType
+	Imported bool
+	Import   *Import
+	Body     *FunctionBody
 }

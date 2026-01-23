@@ -2,24 +2,6 @@ package wasm
 
 import "fmt"
 
-type ResolvedModule struct {
-	Version   uint32
-	Types     []FuncType
-	Imports   []Import
-	Functions []ResolvedFunction
-	Memories  []Limits
-	Exports   []Export
-}
-
-type ResolvedFunction struct {
-	Index    uint32
-	Name     string
-	Type     *FuncType
-	Imported bool
-	Import   *Import
-	Body     *FunctionBody
-}
-
 func Resolve(mod *Module) (*ResolvedModule, error) {
 	rm := &ResolvedModule{
 		Version: mod.Version,
