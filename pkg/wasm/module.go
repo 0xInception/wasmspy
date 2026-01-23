@@ -37,6 +37,14 @@ func Resolve(mod *Module) (*ResolvedModule, error) {
 		funcTypeIndices = indices
 	}
 
+	if sec := sections[SectionTable]; sec != nil {
+		tables, err := ParseTableSection(sec.Content, int(sec.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("table section: %w", err)
+		}
+		rm.Tables = tables
+	}
+
 	if sec := sections[SectionMemory]; sec != nil {
 		memories, err := ParseMemorySection(sec.Content, int(sec.Offset))
 		if err != nil {
@@ -59,6 +67,30 @@ func Resolve(mod *Module) (*ResolvedModule, error) {
 			return nil, fmt.Errorf("export section: %w", err)
 		}
 		rm.Exports = exports
+	}
+
+	if sec := sections[SectionStart]; sec != nil {
+		startIdx, err := ParseStartSection(sec.Content, int(sec.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("start section: %w", err)
+		}
+		rm.Start = &startIdx
+	}
+
+	if sec := sections[SectionElement]; sec != nil {
+		elements, err := ParseElementSection(sec.Content, int(sec.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("element section: %w", err)
+		}
+		rm.Elements = elements
+	}
+
+	if sec := sections[SectionData]; sec != nil {
+		data, err := ParseDataSection(sec.Content, int(sec.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("data section: %w", err)
+		}
+		rm.Data = data
 	}
 
 	var bodies []FunctionBody
@@ -121,6 +153,39 @@ func Resolve(mod *Module) (*ResolvedModule, error) {
 	for i := range rm.Functions {
 		if name, ok := exportNames[rm.Functions[i].Index]; ok {
 			rm.Functions[i].Name = name
+		}
+	}
+
+	for i := range mod.Sections {
+		if mod.Sections[i].ID != SectionCustom {
+			continue
+		}
+		content := mod.Sections[i].Content
+		if len(content) < 5 {
+			continue
+		}
+		nameLen, n, err := ReadLEB128U32FromSlice(content)
+		if err != nil || int(nameLen)+n > len(content) {
+			continue
+		}
+		secName := string(content[n : n+int(nameLen)])
+		if secName == "name" {
+			payload := content[n+int(nameLen):]
+			names, err := ParseNameSection(payload, int(mod.Sections[i].Offset)+n+int(nameLen))
+			if err == nil && names != nil {
+				rm.Names = names
+				for idx, name := range names.FunctionNames {
+					if _, hasExport := exportNames[idx]; !hasExport {
+						for j := range rm.Functions {
+							if rm.Functions[j].Index == idx {
+								rm.Functions[j].Name = name
+								break
+							}
+						}
+					}
+				}
+			}
+			break
 		}
 	}
 

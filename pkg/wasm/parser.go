@@ -51,6 +51,19 @@ func (p *parser) readS32() (int32, error) {
 	return val, nil
 }
 
+func (p *parser) readString() (string, error) {
+	length, err := p.readU32()
+	if err != nil {
+		return "", err
+	}
+	if p.remaining() < int(length) {
+		return "", newError(ErrTruncated, int64(p.offset), "string truncated")
+	}
+	s := string(p.data[p.offset : p.offset+int(length)])
+	p.offset += int(length)
+	return s, nil
+}
+
 func ParseFile(path string) (*Module, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

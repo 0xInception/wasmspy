@@ -40,6 +40,15 @@ func (rm *ResolvedModule) ToWAT() string {
 		b.WriteString(formatFunction(&fn, exportName))
 	}
 
+	for i, tbl := range rm.Tables {
+		exp := tableExports[uint32(i)]
+		if exp != "" {
+			b.WriteString(fmt.Sprintf("  (table (export %q) %s funcref)\n", exp, formatLimits(&tbl.Limits)))
+		} else {
+			b.WriteString(fmt.Sprintf("  (table %s funcref)\n", formatLimits(&tbl.Limits)))
+		}
+	}
+
 	for i, mem := range rm.Memories {
 		exp := memExports[uint32(i)]
 		if exp != "" {
@@ -51,6 +60,18 @@ func (rm *ResolvedModule) ToWAT() string {
 
 	for i, glob := range rm.Globals {
 		b.WriteString(formatGlobal(&glob, globalExports[uint32(i)]))
+	}
+
+	if rm.Start != nil {
+		b.WriteString(fmt.Sprintf("  (start %d)\n", *rm.Start))
+	}
+
+	for _, elem := range rm.Elements {
+		b.WriteString(formatElementSegment(&elem))
+	}
+
+	for _, seg := range rm.Data {
+		b.WriteString(formatDataSegment(&seg))
 	}
 
 	b.WriteString(")")
@@ -165,6 +186,11 @@ func formatInstruction(instr *Instruction) string {
 		return instr.Name
 	}
 
+	if instr.Opcode == OpCallIndirect && len(instr.Immediates) >= 1 {
+		typeIdx := instr.Immediates[0]
+		return fmt.Sprintf("call_indirect (type %v)", typeIdx)
+	}
+
 	var args []string
 	for _, imm := range instr.Immediates {
 		switch v := imm.(type) {
@@ -227,4 +253,42 @@ func formatTypes(types []ValType) string {
 		parts[i] = t.String()
 	}
 	return strings.Join(parts, " ")
+}
+
+func formatDataSegment(seg *DataSegment) string {
+	var b strings.Builder
+
+	b.WriteString("  (data")
+
+	for _, instr := range seg.Offset {
+		if instr.Opcode == OpEnd {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(" (%s)", formatInstruction(&instr)))
+	}
+
+	b.WriteString(fmt.Sprintf(" %q)\n", string(seg.Data)))
+
+	return b.String()
+}
+
+func formatElementSegment(elem *ElementSegment) string {
+	var b strings.Builder
+
+	b.WriteString("  (elem")
+
+	for _, instr := range elem.Offset {
+		if instr.Opcode == OpEnd {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(" (%s)", formatInstruction(&instr)))
+	}
+
+	for _, idx := range elem.FuncIdxs {
+		b.WriteString(fmt.Sprintf(" %d", idx))
+	}
+
+	b.WriteString(")\n")
+
+	return b.String()
 }

@@ -146,14 +146,47 @@ type FunctionBody struct {
 	Instructions []Instruction
 }
 
+type ElemType byte
+
+const (
+	ElemFuncRef ElemType = 0x70
+)
+
+type Table struct {
+	Type   ElemType
+	Limits Limits
+}
+
+type DataSegment struct {
+	MemoryIndex uint32
+	Offset      []Instruction
+	Data        []byte
+}
+
+type ElementSegment struct {
+	TableIndex uint32
+	Offset     []Instruction
+	FuncIdxs   []uint32
+}
+
+type NameMap struct {
+	FunctionNames map[uint32]string
+	LocalNames    map[uint32]map[uint32]string
+}
+
 type ResolvedModule struct {
 	Version   uint32
 	Types     []FuncType
 	Imports   []Import
 	Functions []ResolvedFunction
+	Tables    []Table
 	Memories  []Limits
 	Globals   []Global
 	Exports   []Export
+	Start     *uint32
+	Elements  []ElementSegment
+	Data      []DataSegment
+	Names     *NameMap
 }
 
 type ResolvedFunction struct {
