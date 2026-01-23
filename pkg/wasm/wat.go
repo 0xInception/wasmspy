@@ -49,6 +49,10 @@ func (rm *ResolvedModule) ToWAT() string {
 		}
 	}
 
+	for i, glob := range rm.Globals {
+		b.WriteString(formatGlobal(&glob, globalExports[uint32(i)]))
+	}
+
 	b.WriteString(")")
 
 	return b.String()
@@ -178,6 +182,33 @@ func formatInstruction(instr *Instruction) string {
 	}
 
 	return fmt.Sprintf("%s %s", instr.Name, strings.Join(args, " "))
+}
+
+func formatGlobal(glob *Global, exportName string) string {
+	var b strings.Builder
+
+	b.WriteString("  (global")
+
+	if exportName != "" {
+		b.WriteString(fmt.Sprintf(" (export %q)", exportName))
+	}
+
+	if glob.Type.Mutable {
+		b.WriteString(fmt.Sprintf(" (mut %s)", glob.Type.Type.String()))
+	} else {
+		b.WriteString(fmt.Sprintf(" %s", glob.Type.Type.String()))
+	}
+
+	for _, instr := range glob.Init {
+		if instr.Opcode == OpEnd {
+			continue
+		}
+		b.WriteString(fmt.Sprintf(" (%s)", formatInstruction(&instr)))
+	}
+
+	b.WriteString(")\n")
+
+	return b.String()
 }
 
 func formatLimits(lim *Limits) string {

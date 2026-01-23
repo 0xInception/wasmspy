@@ -1,5 +1,10 @@
 package wasm
 
+import (
+	"encoding/binary"
+	"math"
+)
+
 func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 	var instructions []Instruction
 	pc := 0
@@ -21,13 +26,123 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 		}
 
 		switch op {
+		case OpBlock, OpLoop, OpIf:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading block type")
+			}
+			blockType := code[pc]
+			pc++
+			instr.Immediates = append(instr.Immediates, blockType)
+
+		case OpBr, OpBrIf:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading branch index")
+			}
+			val, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid branch index")
+			}
+			instr.Immediates = append(instr.Immediates, val)
+			pc += n
+
+		case OpBrTable:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading br_table")
+			}
+			count, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid br_table count")
+			}
+			pc += n
+
+			labels := make([]uint32, count+1)
+			for i := uint32(0); i <= count; i++ {
+				label, n, err := ReadLEB128U32FromSlice(code[pc:])
+				if err != nil {
+					return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid br_table label")
+				}
+				labels[i] = label
+				pc += n
+			}
+			instr.Immediates = append(instr.Immediates, labels)
+
+		case OpCall:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading call index")
+			}
+			val, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid call index")
+			}
+			instr.Immediates = append(instr.Immediates, val)
+			pc += n
+
+		case OpCallIndirect:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading call_indirect")
+			}
+			typeIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid type index")
+			}
+			pc += n
+
+			tableIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table index")
+			}
+			pc += n
+
+			instr.Immediates = append(instr.Immediates, typeIdx, tableIdx)
+
+		case OpLocalGet, OpLocalSet, OpLocalTee, OpGlobalGet, OpGlobalSet:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading index")
+			}
+			val, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid index")
+			}
+			instr.Immediates = append(instr.Immediates, val)
+			pc += n
+
+		case OpI32Load, OpI64Load, OpF32Load, OpF64Load,
+			OpI32Load8S, OpI32Load8U, OpI32Load16S, OpI32Load16U,
+			OpI64Load8S, OpI64Load8U, OpI64Load16S, OpI64Load16U,
+			OpI64Load32S, OpI64Load32U,
+			OpI32Store, OpI64Store, OpF32Store, OpF64Store,
+			OpI32Store8, OpI32Store16,
+			OpI64Store8, OpI64Store16, OpI64Store32:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading memarg")
+			}
+			align, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid memarg align")
+			}
+			pc += n
+
+			offset, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid memarg offset")
+			}
+			pc += n
+
+			instr.Immediates = append(instr.Immediates, align, offset)
+
+		case OpMemorySize, OpMemoryGrow:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading memory index")
+			}
+			pc++
+
 		case OpI32Const:
 			if pc >= len(code) {
 				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading i32.const")
 			}
 			val, n, err := ReadLEB128S32FromSlice(code[pc:])
 			if err != nil {
-				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid i32.const immediate")
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid i32.const")
 			}
 			instr.Immediates = append(instr.Immediates, val)
 			pc += n
@@ -38,29 +153,28 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 			}
 			val, n, err := ReadLEB128S64FromSlice(code[pc:])
 			if err != nil {
-				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid i64.const immediate")
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid i64.const")
 			}
 			instr.Immediates = append(instr.Immediates, val)
 			pc += n
 
-		case OpLocalGet, OpLocalSet, OpLocalTee, OpCall, OpBr, OpBrIf:
-			if pc >= len(code) {
-				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading index")
+		case OpF32Const:
+			if pc+4 > len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading f32.const")
 			}
-			val, n, err := ReadLEB128U32FromSlice(code[pc:])
-			if err != nil {
-				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid index immediate")
-			}
+			bits := binary.LittleEndian.Uint32(code[pc:])
+			val := math.Float32frombits(bits)
 			instr.Immediates = append(instr.Immediates, val)
-			pc += n
+			pc += 4
 
-		case OpBlock, OpLoop:
-			if pc >= len(code) {
-				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading block type")
+		case OpF64Const:
+			if pc+8 > len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading f64.const")
 			}
-			blockType := code[pc]
-			pc++
-			instr.Immediates = append(instr.Immediates, blockType)
+			bits := binary.LittleEndian.Uint64(code[pc:])
+			val := math.Float64frombits(bits)
+			instr.Immediates = append(instr.Immediates, val)
+			pc += 8
 		}
 
 		instructions = append(instructions, instr)

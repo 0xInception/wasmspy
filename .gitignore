@@ -17,3 +17,4 @@
 !.gitignore
 !go.mod
 !go.sum
+!ci.yml

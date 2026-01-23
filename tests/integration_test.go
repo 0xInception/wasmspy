@@ -245,3 +245,64 @@ func TestWATOutputWithImports(t *testing.T) {
 	wat := rm.ToWAT()
 	t.Logf("WAT output:\n%s", wat)
 }
+
+func TestArithmeticOpcodes(t *testing.T) {
+	path := filepath.Join("testdata", "arithmetic.wasm")
+
+	mod, err := wasm.ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	rm, err := wasm.Resolve(mod)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	if len(rm.Functions) != 3 {
+		t.Fatalf("expected 3 functions, got %d", len(rm.Functions))
+	}
+
+	multiply := rm.GetFunctionByName("multiply")
+	if multiply == nil {
+		t.Fatal("function 'multiply' not found")
+	}
+
+	hasOp := func(fn *wasm.ResolvedFunction, name string) bool {
+		for _, instr := range fn.Body.Instructions {
+			if instr.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !hasOp(multiply, "i32.mul") {
+		t.Error("multiply should have i32.mul")
+	}
+
+	isZero := rm.GetFunctionByName("is_zero")
+	if isZero == nil {
+		t.Fatal("function 'is_zero' not found")
+	}
+	if !hasOp(isZero, "i32.eqz") {
+		t.Error("is_zero should have i32.eqz")
+	}
+
+	bitwise := rm.GetFunctionByName("bitwise")
+	if bitwise == nil {
+		t.Fatal("function 'bitwise' not found")
+	}
+	if !hasOp(bitwise, "i32.and") {
+		t.Error("bitwise should have i32.and")
+	}
+	if !hasOp(bitwise, "i32.or") {
+		t.Error("bitwise should have i32.or")
+	}
+	if !hasOp(bitwise, "i32.xor") {
+		t.Error("bitwise should have i32.xor")
+	}
+
+	wat := rm.ToWAT()
+	t.Logf("WAT output:\n%s", wat)
+}

@@ -120,6 +120,11 @@ type GlobalType struct {
 	Mutable bool
 }
 
+type Global struct {
+	Type GlobalType
+	Init []Instruction
+}
+
 type Import struct {
 	Module  string
 	Name    string
@@ -147,6 +152,7 @@ type ResolvedModule struct {
 	Imports   []Import
 	Functions []ResolvedFunction
 	Memories  []Limits
+	Globals   []Global
 	Exports   []Export
 }
 

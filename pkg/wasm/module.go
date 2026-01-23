@@ -45,6 +45,14 @@ func Resolve(mod *Module) (*ResolvedModule, error) {
 		rm.Memories = memories
 	}
 
+	if sec := sections[SectionGlobal]; sec != nil {
+		globals, err := ParseGlobalSection(sec.Content, int(sec.Offset))
+		if err != nil {
+			return nil, fmt.Errorf("global section: %w", err)
+		}
+		rm.Globals = globals
+	}
+
 	if sec := sections[SectionExport]; sec != nil {
 		exports, err := ParseExportSection(sec.Content, int(sec.Offset))
 		if err != nil {
