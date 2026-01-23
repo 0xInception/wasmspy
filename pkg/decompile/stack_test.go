@@ -86,8 +86,8 @@ func TestAnalyzeArithmetic(t *testing.T) {
 	}
 
 	for i, v := range mulFrame.Stack {
-		if v.Source != SourceLocal {
-			t.Errorf("stack[%d] expected SourceLocal, got %d", i, v.Source)
+		if v.Source != SourceParam {
+			t.Errorf("stack[%d] expected SourceParam, got %d", i, v.Source)
 		}
 	}
 }

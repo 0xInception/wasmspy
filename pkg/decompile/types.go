@@ -22,8 +22,15 @@ type Value struct {
 }
 
 type OpValue struct {
-	Instr  *wasm.Instruction
-	Inputs []*Value
+	Instr   *wasm.Instruction
+	Inputs  []*Value
+	Ternary *TernaryValue
+}
+
+type TernaryValue struct {
+	Cond       Expr
+	ThenResult Expr
+	ElseResult Expr
 }
 
 type Frame struct {

@@ -73,7 +73,7 @@ func simulateInstr(instr *wasm.Instruction, stack []*Value, locals []*Value, fn 
 		}
 		stack = append(stack, &Value{
 			Type:   locals[idx].Type,
-			Source: SourceLocal,
+			Source: locals[idx].Source,
 			Index:  idx,
 		})
 
