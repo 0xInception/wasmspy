@@ -7,6 +7,9 @@
 # 3. Re-ignore annoying directories
 .idea/
 .vscode/
+node_modules/
+dist/
+build/bin/
 
 # 4. Re-include specific files
 !*.go
@@ -18,3 +21,29 @@
 !go.mod
 !go.sum
 !ci.yml
+
+# Frontend
+!*.ts
+!*.js
+!*.svelte
+!*.css
+!*.html
+!*.json
+!svelte.config.js
+!tsconfig.json
+!tsconfig.node.json
+!vite.config.ts
+
+# Wails
+!wails.json
+!*.png
+!*.ico
+!*.icns
+!*.plist
+!*.nsi
+!*.nsh
+!*.manifest
+
+# Wails generated (exclude)
+frontend/wailsjs/go/
+frontend/package.json.md5
