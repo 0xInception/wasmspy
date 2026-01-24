@@ -75,6 +75,10 @@ type NegExpr struct {
 	Type wasm.ValType
 }
 
+type NotExpr struct {
+	Arg Expr
+}
+
 type AssignStmt struct {
 	Target Expr
 	Value  Expr
@@ -105,6 +109,17 @@ type SwitchStmt struct {
 	Default int
 }
 
+type SwitchCase struct {
+	Value int
+	Body  []Stmt
+}
+
+type FlatSwitchStmt struct {
+	Value   Expr
+	Cases   []SwitchCase
+	Default []Stmt
+}
+
 type WhileStmt struct {
 	Cond Expr
 	Body []Stmt
@@ -122,6 +137,7 @@ func (*CallExpr) node()    {}
 func (*LoadExpr) node()    {}
 func (*TernaryExpr) node() {}
 func (*NegExpr) node()     {}
+func (*NotExpr) node()     {}
 
 func (*LocalExpr) expr()   {}
 func (*GlobalExpr) expr()  {}
@@ -133,21 +149,24 @@ func (*CallExpr) expr()    {}
 func (*LoadExpr) expr()    {}
 func (*TernaryExpr) expr() {}
 func (*NegExpr) expr()     {}
+func (*NotExpr) expr()     {}
 
 func (*AssignStmt) node()  {}
 func (*StoreStmt) node()   {}
 func (*CallStmt) node()    {}
 func (*ReturnStmt) node()  {}
 func (*DropStmt) node()    {}
-func (*SwitchStmt) node()    {}
-func (*WhileStmt) node()     {}
-func (*ContinueStmt) node()  {}
+func (*SwitchStmt) node()     {}
+func (*FlatSwitchStmt) node() {}
+func (*WhileStmt) node()      {}
+func (*ContinueStmt) node()   {}
 
 func (*AssignStmt) stmt()  {}
 func (*StoreStmt) stmt()   {}
 func (*CallStmt) stmt()    {}
 func (*ReturnStmt) stmt()  {}
 func (*DropStmt) stmt()    {}
-func (*SwitchStmt) stmt()    {}
-func (*WhileStmt) stmt()     {}
-func (*ContinueStmt) stmt()  {}
+func (*SwitchStmt) stmt()     {}
+func (*FlatSwitchStmt) stmt() {}
+func (*WhileStmt) stmt()      {}
+func (*ContinueStmt) stmt()   {}

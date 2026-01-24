@@ -209,3 +209,45 @@ func (rm *ResolvedModule) GetFunctionByName(name string) *ResolvedFunction {
 	}
 	return nil
 }
+
+func (rm *ResolvedModule) BuildMemory() []byte {
+	if len(rm.Data) == 0 {
+		return nil
+	}
+	var maxEnd uint32
+	for _, seg := range rm.Data {
+		offset := getDataOffset(seg.Offset)
+		end := offset + uint32(len(seg.Data))
+		if end > maxEnd {
+			maxEnd = end
+		}
+	}
+	mem := make([]byte, maxEnd)
+	for _, seg := range rm.Data {
+		offset := getDataOffset(seg.Offset)
+		copy(mem[offset:], seg.Data)
+	}
+	return mem
+}
+
+func getDataOffset(instrs []Instruction) uint32 {
+	for _, instr := range instrs {
+		if instr.Opcode == OpI32Const && len(instr.Immediates) > 0 {
+			if v, ok := instr.Immediates[0].(int32); ok {
+				return uint32(v)
+			}
+			if v, ok := instr.Immediates[0].(uint32); ok {
+				return v
+			}
+		}
+	}
+	return 0
+}
+
+func (rm *ResolvedModule) ReadString(addr, length uint32) string {
+	mem := rm.BuildMemory()
+	if mem == nil || int(addr+length) > len(mem) {
+		return ""
+	}
+	return string(mem[addr : addr+length])
+}

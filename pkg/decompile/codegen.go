@@ -31,6 +31,7 @@ func Decompile(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) string {
 	body := BuildStatements(fn, module)
 	SimplifyBody(body)
 	RecoverLoops(body)
+	CollapseSwitchBlocks(body)
 	writeBody(&b, body, 1, ctx)
 
 	b.WriteString("}\n")
@@ -169,6 +170,22 @@ func writeStmt(b *strings.Builder, stmt Stmt, indent int, ctx *codegenCtx) {
 		b.WriteString(fmt.Sprintf("%s  default: break L%d\n", prefix, s.Default))
 		b.WriteString(fmt.Sprintf("%s}\n", prefix))
 
+	case *FlatSwitchStmt:
+		b.WriteString(fmt.Sprintf("%sswitch %s {\n", prefix, exprStr(s.Value, ctx)))
+		for _, c := range s.Cases {
+			b.WriteString(fmt.Sprintf("%scase %d:\n", prefix, c.Value))
+			for _, inner := range c.Body {
+				writeStmt(b, inner, indent+1, ctx)
+			}
+		}
+		if len(s.Default) > 0 {
+			b.WriteString(fmt.Sprintf("%sdefault:\n", prefix))
+			for _, inner := range s.Default {
+				writeStmt(b, inner, indent+1, ctx)
+			}
+		}
+		b.WriteString(fmt.Sprintf("%s}\n", prefix))
+
 	case *WhileStmt:
 		b.WriteString(fmt.Sprintf("%swhile %s {\n", prefix, exprStr(s.Cond, ctx)))
 		for _, inner := range s.Body {
@@ -210,6 +227,8 @@ func exprStr(e Expr, ctx *codegenCtx) string {
 		return fmt.Sprintf("(%s ? %s : %s)", exprStr(v.Cond, ctx), exprStr(v.ThenResult, ctx), exprStr(v.ElseResult, ctx))
 	case *NegExpr:
 		return fmt.Sprintf("-%s", exprStr(v.Arg, ctx))
+	case *NotExpr:
+		return fmt.Sprintf("!(%s)", exprStr(v.Arg, ctx))
 	}
 	return "?"
 }

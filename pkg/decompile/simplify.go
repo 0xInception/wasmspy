@@ -200,6 +200,114 @@ func SimplifyBody(body *FuncBody) {
 	}
 }
 
+func CollapseSwitchBlocks(body *FuncBody) {
+	body.Stmts = collapseSwitchInStmts(body.Stmts)
+}
+
+func collapseSwitchInStmts(stmts []Stmt) []Stmt {
+	result := make([]Stmt, 0, len(stmts))
+	for _, stmt := range stmts {
+		result = append(result, collapseSwitchInStmt(stmt))
+	}
+	return result
+}
+
+func collapseSwitchInStmt(stmt Stmt) Stmt {
+	switch s := stmt.(type) {
+	case *BlockStmt:
+		if flat := tryCollapseSwitch(s); flat != nil {
+			return flat
+		}
+		return &BlockStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body)}
+	case *IfStmt:
+		return &IfStmt{Cond: s.Cond, Then: collapseSwitchInStmts(s.Then), Else: collapseSwitchInStmts(s.Else)}
+	case *LoopStmt:
+		return &LoopStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body)}
+	case *WhileStmt:
+		return &WhileStmt{Cond: s.Cond, Body: collapseSwitchInStmts(s.Body)}
+	case *FlatSwitchStmt:
+		cases := make([]SwitchCase, len(s.Cases))
+		for i, c := range s.Cases {
+			cases[i] = SwitchCase{Value: c.Value, Body: collapseSwitchInStmts(c.Body)}
+		}
+		return &FlatSwitchStmt{Value: s.Value, Cases: cases, Default: collapseSwitchInStmts(s.Default)}
+	}
+	return stmt
+}
+
+func tryCollapseSwitch(outerBlock *BlockStmt) *FlatSwitchStmt {
+	blocks := []*BlockStmt{outerBlock}
+	bodies := [][]Stmt{nil}
+	current := outerBlock
+
+	for {
+		if len(current.Body) == 0 {
+			break
+		}
+		innerBlock, ok := current.Body[0].(*BlockStmt)
+		if !ok {
+			break
+		}
+		afterInner := current.Body[1:]
+		blocks = append(blocks, innerBlock)
+		bodies = append(bodies, afterInner)
+		current = innerBlock
+	}
+
+	if len(blocks) < 2 {
+		return nil
+	}
+
+	var sw *SwitchStmt
+	for _, stmt := range current.Body {
+		if s, ok := stmt.(*SwitchStmt); ok {
+			sw = s
+			break
+		}
+	}
+	if sw == nil {
+		return nil
+	}
+
+	labelToIdx := make(map[int]int)
+	for i, b := range blocks {
+		labelToIdx[b.Label] = i
+	}
+
+	outerLabel := blocks[0].Label
+	cases := make([]SwitchCase, 0, len(sw.Cases))
+	for i, label := range sw.Cases {
+		idx, ok := labelToIdx[label]
+		if !ok {
+			return nil
+		}
+		body := extractCaseBody(bodies[idx], outerLabel)
+		cases = append(cases, SwitchCase{Value: i, Body: body})
+	}
+
+	var defaultBody []Stmt
+	if defIdx, ok := labelToIdx[sw.Default]; ok {
+		defaultBody = extractCaseBody(bodies[defIdx], outerLabel)
+	}
+
+	return &FlatSwitchStmt{
+		Value:   sw.Value,
+		Cases:   cases,
+		Default: defaultBody,
+	}
+}
+
+func extractCaseBody(stmts []Stmt, outerLabel int) []Stmt {
+	result := make([]Stmt, 0, len(stmts))
+	for _, stmt := range stmts {
+		if br, ok := stmt.(*BreakStmt); ok && br.Label == outerLabel && br.Cond == nil {
+			continue
+		}
+		result = append(result, collapseSwitchInStmt(stmt))
+	}
+	return result
+}
+
 func simplifyStmt(s Stmt) Stmt {
 	switch v := s.(type) {
 	case *AssignStmt:
@@ -221,7 +329,11 @@ func simplifyStmt(s Stmt) Stmt {
 		for i := range v.Else {
 			els[i] = simplifyStmt(v.Else[i])
 		}
-		return &IfStmt{Cond: Simplify(v.Cond), Then: then, Else: els}
+		cond := Simplify(v.Cond)
+		if len(then) == 0 && len(els) > 0 {
+			return &IfStmt{Cond: negateCond(cond), Then: els, Else: nil}
+		}
+		return &IfStmt{Cond: cond, Then: then, Else: els}
 	case *LoopStmt:
 		body := make([]Stmt, len(v.Body))
 		for i := range v.Body {
@@ -240,6 +352,20 @@ func simplifyStmt(s Stmt) Stmt {
 		}
 	case *SwitchStmt:
 		return &SwitchStmt{Value: Simplify(v.Value), Cases: v.Cases, Default: v.Default}
+	case *FlatSwitchStmt:
+		cases := make([]SwitchCase, len(v.Cases))
+		for i, c := range v.Cases {
+			body := make([]Stmt, len(c.Body))
+			for j := range c.Body {
+				body[j] = simplifyStmt(c.Body[j])
+			}
+			cases[i] = SwitchCase{Value: c.Value, Body: body}
+		}
+		def := make([]Stmt, len(v.Default))
+		for i := range v.Default {
+			def[i] = simplifyStmt(v.Default[i])
+		}
+		return &FlatSwitchStmt{Value: Simplify(v.Value), Cases: cases, Default: def}
 	case *WhileStmt:
 		body := make([]Stmt, len(v.Body))
 		for i := range v.Body {

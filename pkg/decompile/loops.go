@@ -67,6 +67,8 @@ func tryConvertToWhile(block *BlockStmt) *WhileStmt {
 
 func negateCond(e Expr) Expr {
 	switch v := e.(type) {
+	case *NotExpr:
+		return v.Arg
 	case *BinaryExpr:
 		switch v.Op {
 		case 0x46, 0x51: // i32.eq, i64.eq
@@ -81,13 +83,21 @@ func negateCond(e Expr) Expr {
 			return &BinaryExpr{Op: 0x4a, Left: v.Left, Right: v.Right, Type: v.Type} // i32.gt_s
 		case 0x4e, 0x59: // i32.ge_s, i64.ge_s
 			return &BinaryExpr{Op: 0x48, Left: v.Left, Right: v.Right, Type: v.Type} // i32.lt_s
+		case 0x49, 0x54: // i32.lt_u, i64.lt_u
+			return &BinaryExpr{Op: 0x4f, Left: v.Left, Right: v.Right, Type: v.Type} // i32.ge_u
+		case 0x4b, 0x56: // i32.gt_u, i64.gt_u
+			return &BinaryExpr{Op: 0x4d, Left: v.Left, Right: v.Right, Type: v.Type} // i32.le_u
+		case 0x4d, 0x58: // i32.le_u, i64.le_u
+			return &BinaryExpr{Op: 0x4b, Left: v.Left, Right: v.Right, Type: v.Type} // i32.gt_u
+		case 0x4f, 0x5a: // i32.ge_u, i64.ge_u
+			return &BinaryExpr{Op: 0x49, Left: v.Left, Right: v.Right, Type: v.Type} // i32.lt_u
 		}
 	case *UnaryExpr:
 		if v.Op == 0x45 || v.Op == 0x50 { // i32.eqz, i64.eqz
 			return v.Arg
 		}
 	}
-	return &UnaryExpr{Op: 0x45, Arg: e, Type: e.(*BinaryExpr).Type} // i32.eqz as fallback
+	return &NotExpr{Arg: e}
 }
 
 func convertBreaksInLoop(stmts []Stmt, loopLabel, blockLabel int) []Stmt {
