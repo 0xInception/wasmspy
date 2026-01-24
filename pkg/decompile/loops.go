@@ -119,9 +119,9 @@ func convertBreakInStmt(stmt Stmt, loopLabel, blockLabel int) Stmt {
 		}
 		if s.Label == blockLabel {
 			if s.Cond != nil {
-				return &IfStmt{Cond: s.Cond, Then: []Stmt{&BreakStmt{Label: 0}}}
+				return &IfStmt{Cond: s.Cond, Then: []Stmt{&BreakStmt{Label: 0, Offsets: s.Offsets}}}
 			}
-			return &BreakStmt{Label: 0}
+			return &BreakStmt{Label: 0, Offsets: s.Offsets}
 		}
 
 	case *IfStmt:

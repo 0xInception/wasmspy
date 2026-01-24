@@ -2,14 +2,21 @@
   import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark } from './types';
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte';
 
+  type GroupedFunctions = [string, FunctionInfo[]][];
+
   interface LoadedModule {
     path: string;
     name: string;
     info: ModuleInfo;
+    functionsById: Map<number, FunctionInfo>;
+    functionsByName: Map<string, FunctionInfo>;
+    groupedFunctions: GroupedFunctions;
+    groupedImports: GroupedFunctions;
   }
 
   let {
     modules,
+    modulesByPath,
     activeModuleIndex,
     selected,
     loading,
@@ -30,6 +37,7 @@
     getErrorCount,
   }: {
     modules: LoadedModule[];
+    modulesByPath: Map<string, LoadedModule>;
     activeModuleIndex: number;
     selected: string;
     loading: boolean;
@@ -104,29 +112,10 @@
     return dot > 0 ? name.slice(0, dot) : '_ungrouped';
   }
 
-  function getGroupedFunctions(moduleInfo: ModuleInfo, imported: boolean) {
-    if (!moduleInfo?.functions) return [];
-    const groups = new Map<string, FunctionInfo[]>();
-    for (const fn of moduleInfo.functions) {
-      if (fn.imported !== imported) continue;
-      const prefix = getPrefix(fn.name);
-      if (!groups.has(prefix)) groups.set(prefix, []);
-      groups.get(prefix)!.push(fn);
-    }
-    for (const fns of groups.values()) {
-      fns.sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }
-
-  function countFunctions(moduleInfo: ModuleInfo, imported: boolean): number {
-    return moduleInfo?.functions?.filter(f => f.imported === imported).length ?? 0;
-  }
-
   let expandedBookmarks = $state(true);
 
   let activeBookmarks = $derived(
-    bookmarks.filter(b => modules.some(m => m.path === b.modulePath))
+    bookmarks.filter(b => modulesByPath.has(b.modulePath))
   );
 </script>
 
@@ -168,7 +157,7 @@
         {#if expandedBookmarks}
           <div class="ml-4">
             {#each activeBookmarks as bookmark}
-              {@const mod = modules.find(m => m.path === bookmark.modulePath)}
+              {@const mod = modulesByPath.get(bookmark.modulePath)}
               <button
                 class="flex items-center gap-1 w-full px-2 py-0.5 hover:bg-gray-800 rounded text-left text-xs"
                 onclick={() => onSelectBookmark(bookmark)}
@@ -202,8 +191,8 @@
       {@const isActive = modIndex === activeModuleIndex}
       {@const modKey = `mod-${modIndex}`}
       {@const isExpanded = expanded[modKey] ?? isActive}
-      {@const importedFunctions = getGroupedFunctions(mod.info, true)}
-      {@const definedFunctions = getGroupedFunctions(mod.info, false)}
+      {@const importedFunctions = mod.groupedImports}
+      {@const definedFunctions = mod.groupedFunctions}
 
       <div class="group">
         <button
@@ -222,7 +211,7 @@
           <div class="ml-4">
             <button class="flex items-center gap-1 w-full px-2 py-1 hover:bg-gray-800 rounded text-left" onclick={() => toggle(`${modKey}-functions`)}>
               <span class="text-gray-500 w-3">{expanded[`${modKey}-functions`] ? '▼' : '▶'}</span>
-              <span>Functions ({countFunctions(mod.info, false)})</span>
+              <span>Functions ({definedFunctions.reduce((n, [, fns]) => n + fns.length, 0)})</span>
             </button>
             {#if expanded[`${modKey}-functions`] || searchQuery}
               <div class="ml-4">
@@ -264,7 +253,7 @@
 
             <button class="flex items-center gap-1 w-full px-2 py-1 hover:bg-gray-800 rounded text-left" onclick={() => toggle(`${modKey}-imports`)}>
               <span class="text-gray-500 w-3">{expanded[`${modKey}-imports`] ? '▼' : '▶'}</span>
-              <span>Imports ({countFunctions(mod.info, true)})</span>
+              <span>Imports ({importedFunctions.reduce((n, [, fns]) => n + fns.length, 0)})</span>
             </button>
             {#if expanded[`${modKey}-imports`] || searchQuery}
               <div class="ml-4">

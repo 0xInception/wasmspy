@@ -27,24 +27,29 @@ const (
 )
 
 type IfStmt struct {
-	Cond Expr
-	Then []Stmt
-	Else []Stmt
+	Cond      Expr
+	Then      []Stmt
+	Else      []Stmt
+	SrcOffset uint64
 }
 
 type LoopStmt struct {
-	Label int
-	Body  []Stmt
+	Label     int
+	Body      []Stmt
+	SrcOffset uint64
 }
 
 type BlockStmt struct {
-	Label int
-	Body  []Stmt
+	Label     int
+	Body      []Stmt
+	SrcOffset uint64
 }
 
 type BreakStmt struct {
-	Label int
-	Cond  Expr
+	Label     int
+	Cond      Expr
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 func (*IfStmt) node()    {}
@@ -227,14 +232,16 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 	case wasm.OpBr:
 		label := getU32(instr.Immediates, 0)
 		target := b.getBlockLabel(int(label))
-		b.emit(&BreakStmt{Label: target})
+		b.emit(&BreakStmt{Label: target, SrcOffset: instr.Offset, Offsets: []uint64{instr.Offset}})
 		b.unreachable = true
 
 	case wasm.OpBrIf:
 		label := getU32(instr.Immediates, 0)
 		cond := b.pop()
 		target := b.getBlockLabel(int(label))
-		b.emit(&BreakStmt{Label: target, Cond: ValueToExpr(cond)})
+		offsets := CollectValueOffsets(cond)
+		offsets = append(offsets, instr.Offset)
+		b.emit(&BreakStmt{Label: target, Cond: ValueToExpr(cond), SrcOffset: instr.Offset, Offsets: offsets})
 
 	case wasm.OpBrTable:
 		idx := b.pop()
@@ -245,7 +252,9 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 				cases[i] = b.getBlockLabel(int(labels[i]))
 			}
 			def := b.getBlockLabel(int(labels[len(labels)-1]))
-			b.emit(&SwitchStmt{Value: ValueToExpr(idx), Cases: cases, Default: def})
+			offsets := CollectValueOffsets(idx)
+			offsets = append(offsets, instr.Offset)
+			b.emit(&SwitchStmt{Value: ValueToExpr(idx), Cases: cases, Default: def, Offsets: offsets})
 		}
 		b.unreachable = true
 
@@ -253,9 +262,13 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		idx := getU32(instr.Immediates, 0)
 		val := b.pop()
 		b.locals[idx] = val
+		offsets := CollectValueOffsets(val)
+		offsets = append(offsets, instr.Offset)
 		b.emit(&AssignStmt{
-			Target: &LocalExpr{Index: idx, Type: val.Type},
-			Value:  ValueToExpr(val),
+			Target:    &LocalExpr{Index: idx, Type: val.Type},
+			Value:     ValueToExpr(val),
+			SrcOffset: instr.Offset,
+			Offsets:   offsets,
 		})
 
 	case wasm.OpLocalTee:
@@ -263,9 +276,13 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		if len(b.stack) > 0 {
 			val := b.stack[len(b.stack)-1]
 			b.locals[idx] = val
+			offsets := CollectValueOffsets(val)
+			offsets = append(offsets, instr.Offset)
 			b.emit(&AssignStmt{
-				Target: &LocalExpr{Index: idx, Type: val.Type},
-				Value:  ValueToExpr(val),
+				Target:    &LocalExpr{Index: idx, Type: val.Type},
+				Value:     ValueToExpr(val),
+				SrcOffset: instr.Offset,
+				Offsets:   offsets,
 			})
 		}
 
@@ -276,9 +293,13 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		if val != nil {
 			t = val.Type
 		}
+		offsets := CollectValueOffsets(val)
+		offsets = append(offsets, instr.Offset)
 		b.emit(&AssignStmt{
-			Target: &GlobalExpr{Index: idx, Type: t},
-			Value:  ValueToExpr(val),
+			Target:    &GlobalExpr{Index: idx, Type: t},
+			Value:     ValueToExpr(val),
+			SrcOffset: instr.Offset,
+			Offsets:   offsets,
 		})
 
 	case wasm.OpI32Store, wasm.OpI64Store, wasm.OpF32Store, wasm.OpF64Store,
@@ -289,16 +310,23 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		if len(instr.Immediates) >= 2 {
 			offset = getU32(instr.Immediates, 1)
 		}
+		offsets := CollectValueOffsets(val)
+		offsets = append(offsets, CollectValueOffsets(addr)...)
+		offsets = append(offsets, instr.Offset)
 		b.emit(&StoreStmt{
-			Op:     instr.Opcode,
-			Addr:   ValueToExpr(addr),
-			Value:  ValueToExpr(val),
-			Offset: offset,
+			Op:        instr.Opcode,
+			Addr:      ValueToExpr(addr),
+			Value:     ValueToExpr(val),
+			Offset:    offset,
+			SrcOffset: instr.Offset,
+			Offsets:   offsets,
 		})
 
 	case wasm.OpDrop:
 		val := b.pop()
-		b.emit(&DropStmt{Value: ValueToExpr(val)})
+		offsets := CollectValueOffsets(val)
+		offsets = append(offsets, instr.Offset)
+		b.emit(&DropStmt{Value: ValueToExpr(val), SrcOffset: instr.Offset, Offsets: offsets})
 
 	case wasm.OpSelect:
 		cond := b.pop()
@@ -322,14 +350,19 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 					ElseResult: ValueToExpr(val2),
 				},
 			},
+			Instr: instr,
 		})
 
 	case wasm.OpReturn:
 		var val Expr
+		var offsets []uint64
 		if len(b.stack) > 0 {
-			val = ValueToExpr(b.pop())
+			v := b.pop()
+			val = ValueToExpr(v)
+			offsets = CollectValueOffsets(v)
 		}
-		b.emit(&ReturnStmt{Value: val})
+		offsets = append(offsets, instr.Offset)
+		b.emit(&ReturnStmt{Value: val, SrcOffset: instr.Offset, Offsets: offsets})
 		b.unreachable = true
 
 	case wasm.OpCall:
@@ -345,19 +378,27 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			}
 		}
 		if sig != nil {
-			args := make([]Expr, len(sig.Params))
+			argVals := make([]*Value, len(sig.Params))
 			for i := len(sig.Params) - 1; i >= 0; i-- {
-				args[i] = ValueToExpr(b.pop())
+				argVals[i] = b.pop()
 			}
+			args := make([]Expr, len(argVals))
+			var offsets []uint64
+			for i, v := range argVals {
+				args[i] = ValueToExpr(v)
+				offsets = append(offsets, CollectValueOffsets(v)...)
+			}
+			offsets = append(offsets, instr.Offset)
 			call := &CallExpr{FuncIndex: idx, FuncName: name, Args: args}
 			if len(sig.Results) > 0 {
 				b.push(&Value{
 					Type:   sig.Results[0],
 					Source: SourceOp,
-					Op:     &OpValue{Instr: instr, Inputs: nil},
+					Op:     &OpValue{Instr: instr, Inputs: argVals},
+					Instr:  instr,
 				})
 			} else {
-				b.emit(&CallStmt{Call: call})
+				b.emit(&CallStmt{Call: call, SrcOffset: instr.Offset, Offsets: offsets})
 			}
 		}
 
@@ -369,23 +410,33 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			sig = &b.module.Types[typeIdx]
 		}
 		if sig != nil {
-			args := make([]Expr, len(sig.Params)+1)
-			args[0] = ValueToExpr(funcIdx)
+			argVals := make([]*Value, len(sig.Params)+1)
+			argVals[0] = funcIdx
 			for i := len(sig.Params) - 1; i >= 0; i-- {
-				args[i+1] = ValueToExpr(b.pop())
+				argVals[i+1] = b.pop()
 			}
+			args := make([]Expr, len(argVals))
+			var offsets []uint64
+			for i, v := range argVals {
+				args[i] = ValueToExpr(v)
+				offsets = append(offsets, CollectValueOffsets(v)...)
+			}
+			offsets = append(offsets, instr.Offset)
 			call := &CallExpr{FuncIndex: 0xFFFFFFFF, Args: args}
 			if len(sig.Results) > 0 {
 				b.push(&Value{
 					Type:   sig.Results[0],
 					Source: SourceOp,
-					Op:     &OpValue{Instr: instr, Inputs: nil},
+					Op:     &OpValue{Instr: instr, Inputs: argVals},
+					Instr:  instr,
 				})
 			} else {
-				b.emit(&CallStmt{Call: call})
+				b.emit(&CallStmt{Call: call, SrcOffset: instr.Offset, Offsets: offsets})
 			}
 		} else {
-			b.emit(&CallStmt{Call: &CallExpr{FuncIndex: 0xFFFFFFFF, Args: []Expr{ValueToExpr(funcIdx)}}})
+			offsets := CollectValueOffsets(funcIdx)
+			offsets = append(offsets, instr.Offset)
+			b.emit(&CallStmt{Call: &CallExpr{FuncIndex: 0xFFFFFFFF, Args: []Expr{ValueToExpr(funcIdx)}}, SrcOffset: instr.Offset, Offsets: offsets})
 		}
 
 	default:
@@ -410,6 +461,7 @@ func (b *stmtBuilder) simulateOp(instr *wasm.Instruction) {
 				Type:   b.locals[idx].Type,
 				Source: src,
 				Index:  idx,
+				Instr:  instr,
 			})
 		}
 
@@ -419,16 +471,16 @@ func (b *stmtBuilder) simulateOp(instr *wasm.Instruction) {
 		if b.module != nil && int(idx) < len(b.module.Globals) {
 			t = b.module.Globals[idx].Type.Type
 		}
-		b.push(&Value{Type: t, Source: SourceGlobal, Index: idx})
+		b.push(&Value{Type: t, Source: SourceGlobal, Index: idx, Instr: instr})
 
 	case wasm.OpI32Const:
-		b.push(&Value{Type: wasm.ValI32, Source: SourceConst, Const: getImmediate(instr.Immediates, 0)})
+		b.push(&Value{Type: wasm.ValI32, Source: SourceConst, Const: getImmediate(instr.Immediates, 0), Instr: instr})
 	case wasm.OpI64Const:
-		b.push(&Value{Type: wasm.ValI64, Source: SourceConst, Const: getImmediate(instr.Immediates, 0)})
+		b.push(&Value{Type: wasm.ValI64, Source: SourceConst, Const: getImmediate(instr.Immediates, 0), Instr: instr})
 	case wasm.OpF32Const:
-		b.push(&Value{Type: wasm.ValF32, Source: SourceConst, Const: getImmediate(instr.Immediates, 0)})
+		b.push(&Value{Type: wasm.ValF32, Source: SourceConst, Const: getImmediate(instr.Immediates, 0), Instr: instr})
 	case wasm.OpF64Const:
-		b.push(&Value{Type: wasm.ValF64, Source: SourceConst, Const: getImmediate(instr.Immediates, 0)})
+		b.push(&Value{Type: wasm.ValF64, Source: SourceConst, Const: getImmediate(instr.Immediates, 0), Instr: instr})
 
 	default:
 		sig, ok := OpSignatures[instr.Opcode]
@@ -442,6 +494,7 @@ func (b *stmtBuilder) simulateOp(instr *wasm.Instruction) {
 					Type:   t,
 					Source: SourceOp,
 					Op:     &OpValue{Instr: instr, Inputs: inputs},
+					Instr:  instr,
 				})
 			}
 		} else {

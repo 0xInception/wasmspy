@@ -54,14 +54,14 @@ type ModuleInfo struct {
 }
 
 type MemoryInfo struct {
-	Index  int  `json:"index"`
+	Index  int    `json:"index"`
 	Min    uint32 `json:"min"`
 	Max    uint32 `json:"max"`
 	HasMax bool   `json:"hasMax"`
 }
 
 type TableInfo struct {
-	Index  int  `json:"index"`
+	Index  int    `json:"index"`
 	Min    uint32 `json:"min"`
 	Max    uint32 `json:"max"`
 	HasMax bool   `json:"hasMax"`
@@ -165,7 +165,19 @@ func (a *App) loadModule(path string, mod *wasm.Module) (*ModuleInfo, error) {
 	return info, nil
 }
 
-func (a *App) DisassembleFunction(path string, index uint32) (string, error) {
+func (a *App) DisassembleFunction(path string, index uint32, indent bool) (string, error) {
+	module := a.modules[path]
+	if module == nil {
+		return "", fmt.Errorf("module not loaded: %s", path)
+	}
+	fn := module.GetFunction(index)
+	if fn == nil {
+		return "", fmt.Errorf("function %d not found", index)
+	}
+	return formatFunctionDisasm(fn, module, indent), nil
+}
+
+func (a *App) GetFunctionWAT(path string, index uint32) (string, error) {
 	module := a.modules[path]
 	if module == nil {
 		return "", fmt.Errorf("module not loaded: %s", path)
@@ -190,6 +202,24 @@ func (a *App) DecompileFunction(path string, index uint32) (string, error) {
 		return fmt.Sprintf("// imported: %s", fn.Name), nil
 	}
 	return decompile.Decompile(fn, module), nil
+}
+
+func (a *App) DecompileFunctionWithMappings(path string, index uint32) (*decompile.DecompileResult, error) {
+	module := a.modules[path]
+	if module == nil {
+		return nil, fmt.Errorf("module not loaded: %s", path)
+	}
+	fn := module.GetFunction(index)
+	if fn == nil {
+		return nil, fmt.Errorf("function %d not found", index)
+	}
+	if fn.Imported {
+		return &decompile.DecompileResult{
+			Code:     fmt.Sprintf("// imported: %s", fn.Name),
+			Mappings: nil,
+		}, nil
+	}
+	return decompile.DecompileWithMappings(fn, module), nil
 }
 
 func (a *App) GetMemory(path string, index int) (string, error) {
@@ -248,10 +278,10 @@ func (a *App) GetGlobal(path string, index int) (string, error) {
 }
 
 type MemoryData struct {
-	Data       []byte        `json:"data"`
-	TotalSize  int           `json:"totalSize"`
-	Offset     int           `json:"offset"`
-	Segments   []DataSegInfo `json:"segments"`
+	Data      []byte        `json:"data"`
+	TotalSize int           `json:"totalSize"`
+	Offset    int           `json:"offset"`
+	Segments  []DataSegInfo `json:"segments"`
 }
 
 type DataSegInfo struct {
@@ -406,6 +436,82 @@ func getDataSegOffset(instrs []wasm.Instruction) uint32 {
 		}
 	}
 	return 0
+}
+
+func formatFunctionDisasm(fn *wasm.ResolvedFunction, rm *wasm.ResolvedModule, indented bool) string {
+	if fn.Imported {
+		return fmt.Sprintf("; imported: %s", fn.Name)
+	}
+
+	var result string
+	result = fmt.Sprintf("; Function %d: %s\n", fn.Index, fn.Name)
+
+	if fn.Type != nil {
+		result += fmt.Sprintf("; Params: %d, Results: %d\n", len(fn.Type.Params), len(fn.Type.Results))
+	}
+
+	if fn.Body != nil {
+		localIdx := 0
+		if fn.Type != nil {
+			localIdx = len(fn.Type.Params)
+		}
+		for _, loc := range fn.Body.Locals {
+			for i := uint32(0); i < loc.Count; i++ {
+				result += fmt.Sprintf(";   local[%d]: %s\n", localIdx, wasm.ValType(loc.Type).String())
+				localIdx++
+			}
+		}
+		result += "\n"
+
+		indent := 0
+		for _, instr := range fn.Body.Instructions {
+			if indented {
+				if instr.Opcode == wasm.OpEnd || instr.Opcode == wasm.OpElse {
+					if indent > 0 {
+						indent--
+					}
+				}
+
+				prefix := ""
+				for j := 0; j < indent; j++ {
+					prefix += "  "
+				}
+				result += fmt.Sprintf("%08x: %s%s\n", instr.Offset, prefix, formatInstrWithImm(&instr))
+
+				if instr.Opcode == wasm.OpBlock || instr.Opcode == wasm.OpLoop ||
+					instr.Opcode == wasm.OpIf || instr.Opcode == wasm.OpElse {
+					indent++
+				}
+			} else {
+				result += fmt.Sprintf("%08x: %s\n", instr.Offset, formatInstrWithImm(&instr))
+			}
+		}
+	}
+
+	return result
+}
+
+func formatInstrWithImm(instr *wasm.Instruction) string {
+	if len(instr.Immediates) == 0 {
+		return instr.Name
+	}
+	result := instr.Name
+	for _, imm := range instr.Immediates {
+		switch v := imm.(type) {
+		case []uint32:
+			result += " ["
+			for i, n := range v {
+				if i > 0 {
+					result += ", "
+				}
+				result += fmt.Sprintf("%d", n)
+			}
+			result += "]"
+		default:
+			result += fmt.Sprintf(" %v", imm)
+		}
+	}
+	return result
 }
 
 func formatFunctionWAT(fn *wasm.ResolvedFunction, rm *wasm.ResolvedModule) string {

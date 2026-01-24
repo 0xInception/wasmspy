@@ -2,10 +2,21 @@ package decompile
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/0xInception/wasmspy/pkg/wasm"
 )
+
+type LineMapping struct {
+	Line    int      `json:"line"`
+	Offsets []uint64 `json:"offsets"`
+}
+
+type DecompileResult struct {
+	Code     string        `json:"code"`
+	Mappings []LineMapping `json:"mappings"`
+}
 
 type codegenCtx struct {
 	names     *NameResolver
@@ -13,8 +24,11 @@ type codegenCtx struct {
 }
 
 func Decompile(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) string {
-	var b strings.Builder
+	result := DecompileWithMappings(fn, module)
+	return result.Code
+}
 
+func DecompileWithMappings(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) *DecompileResult {
 	numParams := 0
 	if fn.Type != nil {
 		numParams = len(fn.Type.Params)
@@ -25,18 +39,175 @@ func Decompile(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) string {
 		numParams: numParams,
 	}
 
-	b.WriteString(formatSignature(fn, ctx))
-	b.WriteString(" {\n")
+	mc := &mappingCodegen{
+		ctx:      ctx,
+		line:     1,
+		mappings: make(map[int][]uint64),
+	}
+
+	mc.writeLine(formatSignature(fn, ctx) + " {")
 
 	body := BuildStatements(fn, module)
 	SimplifyBody(body)
 	RecoverLoops(body)
 	CollapseSwitchBlocks(body)
-	writeBody(&b, body, 1, ctx)
+	mc.writeBodyMapped(body, 1)
 
-	b.WriteString("}\n")
+	mc.writeLine("}")
 
-	return b.String()
+	result := &DecompileResult{
+		Code:     mc.b.String(),
+		Mappings: mc.buildMappings(),
+	}
+	return result
+}
+
+type mappingCodegen struct {
+	ctx      *codegenCtx
+	b        strings.Builder
+	line     int
+	mappings map[int][]uint64
+}
+
+func (mc *mappingCodegen) writeLine(s string) {
+	mc.b.WriteString(s)
+	mc.b.WriteString("\n")
+	mc.line++
+}
+
+func (mc *mappingCodegen) writeLineWithOffsets(s string, offsets []uint64) {
+	mc.b.WriteString(s)
+	mc.b.WriteString("\n")
+	if len(offsets) > 0 {
+		mc.mappings[mc.line] = offsets
+	}
+	mc.line++
+}
+
+func (mc *mappingCodegen) buildMappings() []LineMapping {
+	var result []LineMapping
+	for line, offsets := range mc.mappings {
+		sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+		result = append(result, LineMapping{Line: line, Offsets: offsets})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Line < result[j].Line })
+	return result
+}
+
+func (mc *mappingCodegen) writeBodyMapped(body *FuncBody, indent int) {
+	for _, stmt := range body.Stmts {
+		mc.writeStmtMapped(stmt, indent)
+	}
+
+	if body.Return != nil {
+		prefix := strings.Repeat("  ", indent)
+		mc.writeLine(fmt.Sprintf("%sreturn %s", prefix, exprStr(body.Return, mc.ctx)))
+	}
+}
+
+func (mc *mappingCodegen) writeStmtMapped(stmt Stmt, indent int) {
+	prefix := strings.Repeat("  ", indent)
+
+	switch s := stmt.(type) {
+	case *AssignStmt:
+		mc.writeLineWithOffsets(fmt.Sprintf("%s%s = %s", prefix, exprStr(s.Target, mc.ctx), exprStr(s.Value, mc.ctx)), s.Offsets)
+
+	case *StoreStmt:
+		addr := exprStr(s.Addr, mc.ctx)
+		if s.Offset > 0 {
+			mc.writeLineWithOffsets(fmt.Sprintf("%smem[%s + %d] = %s", prefix, addr, s.Offset, exprStr(s.Value, mc.ctx)), s.Offsets)
+		} else {
+			mc.writeLineWithOffsets(fmt.Sprintf("%smem[%s] = %s", prefix, addr, exprStr(s.Value, mc.ctx)), s.Offsets)
+		}
+
+	case *CallStmt:
+		mc.writeLineWithOffsets(fmt.Sprintf("%s%s", prefix, callStr(s.Call, mc.ctx)), s.Offsets)
+
+	case *ReturnStmt:
+		if s.Value != nil {
+			mc.writeLineWithOffsets(fmt.Sprintf("%sreturn %s", prefix, exprStr(s.Value, mc.ctx)), s.Offsets)
+		} else {
+			mc.writeLineWithOffsets(fmt.Sprintf("%sreturn", prefix), s.Offsets)
+		}
+
+	case *DropStmt:
+		mc.writeLineWithOffsets(fmt.Sprintf("%s_ = %s", prefix, exprStr(s.Value, mc.ctx)), s.Offsets)
+
+	case *IfStmt:
+		cond := "..."
+		if s.Cond != nil {
+			cond = exprStr(s.Cond, mc.ctx)
+		}
+		mc.writeLine(fmt.Sprintf("%sif %s {", prefix, cond))
+		for _, inner := range s.Then {
+			mc.writeStmtMapped(inner, indent+1)
+		}
+		if len(s.Else) > 0 {
+			mc.writeLine(fmt.Sprintf("%s} else {", prefix))
+			for _, inner := range s.Else {
+				mc.writeStmtMapped(inner, indent+1)
+			}
+		}
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *LoopStmt:
+		mc.writeLine(fmt.Sprintf("%sloop L%d {", prefix, s.Label))
+		for _, inner := range s.Body {
+			mc.writeStmtMapped(inner, indent+1)
+		}
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *BlockStmt:
+		mc.writeLine(fmt.Sprintf("%sblock L%d {", prefix, s.Label))
+		for _, inner := range s.Body {
+			mc.writeStmtMapped(inner, indent+1)
+		}
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *BreakStmt:
+		if s.Cond != nil {
+			mc.writeLineWithOffsets(fmt.Sprintf("%sif %s break L%d", prefix, exprStr(s.Cond, mc.ctx), s.Label), s.Offsets)
+		} else {
+			mc.writeLineWithOffsets(fmt.Sprintf("%sbreak L%d", prefix, s.Label), s.Offsets)
+		}
+
+	case *SwitchStmt:
+		mc.writeLineWithOffsets(fmt.Sprintf("%sswitch %s {", prefix, exprStr(s.Value, mc.ctx)), s.Offsets)
+		for i, label := range s.Cases {
+			mc.writeLine(fmt.Sprintf("%s  case %d: break L%d", prefix, i, label))
+		}
+		mc.writeLine(fmt.Sprintf("%s  default: break L%d", prefix, s.Default))
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *FlatSwitchStmt:
+		mc.writeLine(fmt.Sprintf("%sswitch %s {", prefix, exprStr(s.Value, mc.ctx)))
+		for _, c := range s.Cases {
+			mc.writeLine(fmt.Sprintf("%scase %d:", prefix, c.Value))
+			for _, inner := range c.Body {
+				mc.writeStmtMapped(inner, indent+1)
+			}
+		}
+		if len(s.Default) > 0 {
+			mc.writeLine(fmt.Sprintf("%sdefault:", prefix))
+			for _, inner := range s.Default {
+				mc.writeStmtMapped(inner, indent+1)
+			}
+		}
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *WhileStmt:
+		mc.writeLine(fmt.Sprintf("%swhile %s {", prefix, exprStr(s.Cond, mc.ctx)))
+		for _, inner := range s.Body {
+			mc.writeStmtMapped(inner, indent+1)
+		}
+		mc.writeLine(fmt.Sprintf("%s}", prefix))
+
+	case *ContinueStmt:
+		mc.writeLine(fmt.Sprintf("%scontinue", prefix))
+
+	case *ErrorStmt:
+		mc.writeLine(fmt.Sprintf("%s// ERROR at 0x%x: %s", prefix, s.Offset, s.Message))
+	}
 }
 
 func DecompileModule(module *wasm.ResolvedModule) string {

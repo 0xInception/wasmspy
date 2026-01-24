@@ -311,15 +311,15 @@ func extractCaseBody(stmts []Stmt, outerLabel int) []Stmt {
 func simplifyStmt(s Stmt) Stmt {
 	switch v := s.(type) {
 	case *AssignStmt:
-		return &AssignStmt{Target: v.Target, Value: Simplify(v.Value)}
+		return &AssignStmt{Target: v.Target, Value: Simplify(v.Value), Offsets: v.Offsets}
 	case *StoreStmt:
-		return &StoreStmt{Op: v.Op, Addr: Simplify(v.Addr), Value: Simplify(v.Value), Offset: v.Offset}
+		return &StoreStmt{Op: v.Op, Addr: Simplify(v.Addr), Value: Simplify(v.Value), Offset: v.Offset, Offsets: v.Offsets}
 	case *ReturnStmt:
 		if v.Value != nil {
-			return &ReturnStmt{Value: Simplify(v.Value)}
+			return &ReturnStmt{Value: Simplify(v.Value), Offsets: v.Offsets}
 		}
 	case *DropStmt:
-		return &DropStmt{Value: Simplify(v.Value)}
+		return &DropStmt{Value: Simplify(v.Value), Offsets: v.Offsets}
 	case *IfStmt:
 		then := make([]Stmt, len(v.Then))
 		for i := range v.Then {
@@ -348,10 +348,10 @@ func simplifyStmt(s Stmt) Stmt {
 		return &BlockStmt{Label: v.Label, Body: body}
 	case *BreakStmt:
 		if v.Cond != nil {
-			return &BreakStmt{Label: v.Label, Cond: Simplify(v.Cond)}
+			return &BreakStmt{Label: v.Label, Cond: Simplify(v.Cond), Offsets: v.Offsets}
 		}
 	case *SwitchStmt:
-		return &SwitchStmt{Value: Simplify(v.Value), Cases: v.Cases, Default: v.Default}
+		return &SwitchStmt{Value: Simplify(v.Value), Cases: v.Cases, Default: v.Default, Offsets: v.Offsets}
 	case *FlatSwitchStmt:
 		cases := make([]SwitchCase, len(v.Cases))
 		for i, c := range v.Cases {

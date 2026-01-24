@@ -21,6 +21,7 @@ type Value struct {
 	Const  any
 	Op     *OpValue
 	Error  *ErrorValue
+	Instr  *wasm.Instruction
 }
 
 type ErrorValue struct {
@@ -51,4 +52,42 @@ type Analysis struct {
 	Func   *wasm.ResolvedFunction
 	Frames []Frame
 	Errors []error
+}
+
+func CollectValueOffsets(v *Value) []uint64 {
+	if v == nil {
+		return nil
+	}
+
+	seen := make(map[uint64]bool)
+	collectValueOffsetsImpl(v, seen)
+
+	offsets := make([]uint64, 0, len(seen))
+	for off := range seen {
+		offsets = append(offsets, off)
+	}
+	return offsets
+}
+
+func collectValueOffsetsImpl(v *Value, seen map[uint64]bool) {
+	if v == nil {
+		return
+	}
+
+	if v.Instr != nil {
+		seen[v.Instr.Offset] = true
+	}
+
+	if v.Op != nil {
+		if v.Op.Instr != nil {
+			seen[v.Op.Instr.Offset] = true
+		}
+		for _, input := range v.Op.Inputs {
+			collectValueOffsetsImpl(input, seen)
+		}
+	}
+
+	if v.Error != nil && v.Error.Offset != 0 {
+		seen[v.Error.Offset] = true
+	}
 }

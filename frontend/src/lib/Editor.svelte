@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EditorState, Prec, RangeSetBuilder, StateField, type Extension, type RangeSet } from '@codemirror/state';
+  import { EditorState, Prec, RangeSetBuilder, StateField, StateEffect, Compartment, type Extension, type RangeSet } from '@codemirror/state';
   import { EditorView, lineNumbers, keymap, drawSelection, Decoration } from '@codemirror/view';
   import { defaultKeymap, selectAll } from '@codemirror/commands';
   import { search, searchKeymap } from '@codemirror/search';
@@ -12,25 +12,33 @@
 
   function getCurrentFuncIndex(): number | null {
     // Parse function index from first line: ";; Function 123: name" or "func name(...)"
-    const firstLine = content.split('\n')[0];
+    const newlineIdx = content.indexOf('\n');
+    const firstLine = newlineIdx >= 0 ? content.slice(0, newlineIdx) : content;
     const match = firstLine.match(/;;\s*Function\s+(\d+):/);
     if (match) return parseInt(match[1], 10);
     // For decompile mode: "func funcName("
     const decompMatch = firstLine.match(/^func\s+(\S+)\s*\(/);
     if (decompMatch && functions) {
-      const fn = functions.find(f => f.name === decompMatch[1]);
-      if (fn) return fn.index;
+      for (const fn of functions) {
+        if (fn.name === decompMatch[1]) return fn.index;
+      }
     }
     return null;
   }
 
-  let { content, mode = 'disasm', onGotoAddress, onGotoFunction, onShowXRefs, functions }: {
+  let { content, mode = 'disasm', onGotoAddress, onGotoFunction, onShowXRefs, functions, functionsByName, onLineClick, onSelectionChange, highlightLines, onShowDecompile, onShowDisassembly }: {
     content: string;
-    mode?: 'disasm' | 'decompile';
+    mode?: 'disasm' | 'wat' | 'decompile';
     onGotoAddress?: (addr: number) => void;
     onGotoFunction?: (index: number) => void;
     onShowXRefs?: (index: number) => void;
     functions?: { index: number; name: string }[];
+    functionsByName?: Map<string, { index: number; name: string }>;
+    onLineClick?: (lineNumber: number) => void;
+    onSelectionChange?: (startLine: number, endLine: number) => void;
+    highlightLines?: number[] | null;
+    onShowDecompile?: () => void;
+    onShowDisassembly?: () => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -146,7 +154,57 @@
     return tokens;
   }
 
-  function createStaticHighlighter(mode: 'disasm' | 'decompile', theme: ReturnType<typeof getTheme>): Extension {
+  function tokenizeDisasm(text: string, lineFrom: number): Token[] {
+    const tokens: Token[] = [];
+    let i = 0;
+
+    // Match leading hex address like "00000000:"
+    const addrMatch = text.match(/^([0-9a-fA-F]+):/);
+    if (addrMatch) {
+      tokens.push({ from: lineFrom, to: lineFrom + addrMatch[1].length, type: 'number' });
+      i = addrMatch[0].length;
+    }
+
+    // Check for comment line
+    if (text.trimStart().startsWith(';')) {
+      const commentStart = text.indexOf(';');
+      tokens.push({ from: lineFrom + commentStart, to: lineFrom + text.length, type: 'comment' });
+      return tokens;
+    }
+
+    while (i < text.length) {
+      if (/\s/.test(text[i])) { i++; continue; }
+
+      // Numbers (including hex)
+      if (/[-\d]/.test(text[i]) && (text[i] !== '-' || /\d/.test(text[i + 1] || ''))) {
+        const start = i;
+        if (text[i] === '-') i++;
+        if (text.slice(i, i + 2) === '0x') { i += 2; while (i < text.length && /[0-9a-fA-F]/.test(text[i])) i++; }
+        else { while (i < text.length && /[\d.]/.test(text[i])) i++; }
+        if (i > start) { tokens.push({ from: lineFrom + start, to: lineFrom + i, type: 'number' }); continue; }
+      }
+
+      // Brackets
+      if (text[i] === '[' || text[i] === ']' || text[i] === ',' ) { i++; continue; }
+
+      // Instructions and keywords
+      if (/[a-zA-Z_]/.test(text[i])) {
+        const start = i;
+        while (i < text.length && /[\w.]/.test(text[i])) i++;
+        const word = text.slice(start, i);
+        let type: TokenType = 'variable';
+        if (watInstructions.has(word)) type = 'instruction';
+        else if (watTypes.has(word)) type = 'type';
+        else if (watKeywords.has(word)) type = 'keyword';
+        tokens.push({ from: lineFrom + start, to: lineFrom + i, type });
+        continue;
+      }
+      i++;
+    }
+    return tokens;
+  }
+
+  function createStaticHighlighter(mode: 'disasm' | 'wat' | 'decompile', theme: ReturnType<typeof getTheme>): Extension {
     const c = theme.colors;
     const styles: Record<TokenType, Decoration> = {
       keyword: Decoration.mark({ class: 'tok-keyword' }),
@@ -161,7 +219,7 @@
       label: Decoration.mark({ class: 'tok-label' }),
       paren: Decoration.mark({ class: 'tok-paren' }),
     };
-    const tokenize = mode === 'decompile' ? tokenizePseudo : tokenizeWat;
+    const tokenize = mode === 'decompile' ? tokenizePseudo : (mode === 'wat' ? tokenizeWat : tokenizeDisasm);
 
     const field = StateField.define<RangeSet<Decoration>>({
       create(state) {
@@ -233,8 +291,8 @@
     const col = pos - line.from;
     const text = line.text;
 
-    if (mode === 'disasm') {
-      // Look for "call N" pattern in disassembly
+    if (mode === 'disasm' || mode === 'wat') {
+      // Look for "call N" pattern in disassembly/WAT
       const callRegex = /\bcall\s+(\d+)\b/g;
       let match;
       while ((match = callRegex.exec(text)) !== null) {
@@ -253,8 +311,11 @@
         const nameEnd = match.index + match[1].length;
         if (col >= nameStart && col <= nameEnd) {
           const fnName = match[1];
-          const fn = functions.find(f => f.name === fnName || f.name.endsWith('.' + fnName));
-          if (fn) return fn.index;
+          const exactMatch = functionsByName?.get(fnName);
+          if (exactMatch) return exactMatch.index;
+          for (const f of functions) {
+            if (f.name.endsWith('.' + fnName)) return f.index;
+          }
         }
       }
     }
@@ -268,7 +329,7 @@
     const col = sel.head - line.from;
     const text = line.text;
 
-    if (mode === 'disasm') {
+    if (mode === 'disasm' || mode === 'wat') {
       const callRegex = /\bcall\s+(\d+)\b/g;
       let match;
       while ((match = callRegex.exec(text)) !== null) {
@@ -286,8 +347,11 @@
         const parenPos = match.index + match[0].length - 1;
         if (col >= nameStart && col <= parenPos) {
           const fnName = match[1];
-          const fn = functions.find(f => f.name === fnName || f.name.endsWith('.' + fnName));
-          if (fn) return fn.index;
+          const exactMatch = functionsByName?.get(fnName);
+          if (exactMatch) return exactMatch.index;
+          for (const f of functions) {
+            if (f.name.endsWith('.' + fnName)) return f.index;
+          }
         }
       }
     }
@@ -322,6 +386,13 @@
       items.push({ label: 'View references', action: () => onShowXRefs(currentFuncIdx) });
     }
 
+    if (onShowDecompile) {
+      items.push({ label: 'Show Decompile', action: onShowDecompile });
+    }
+    if (onShowDisassembly) {
+      items.push({ label: 'Show Disassembly', action: onShowDisassembly });
+    }
+
     items.push({ label: 'Copy all', action: () => navigator.clipboard.writeText(content) });
 
     if (items.length > 0) {
@@ -330,25 +401,39 @@
   }
 
   function handleClick(e: MouseEvent) {
-    if (!view || (!e.ctrlKey && !e.metaKey)) return;
+    if (!view) return;
 
-    // First try function navigation
-    if (onGotoFunction) {
-      const fnIndex = getFunctionAtPosition(e.clientX, e.clientY);
-      if (fnIndex !== null) {
-        onGotoFunction(fnIndex);
-        e.preventDefault();
-        return;
+    if (e.ctrlKey || e.metaKey) {
+      if (onGotoFunction) {
+        const fnIndex = getFunctionAtPosition(e.clientX, e.clientY);
+        if (fnIndex !== null) {
+          onGotoFunction(fnIndex);
+          e.preventDefault();
+          return;
+        }
+      }
+      if (onGotoAddress) {
+        const num = getNumberAtPosition(e.clientX, e.clientY);
+        if (num !== null) {
+          onGotoAddress(num);
+          e.preventDefault();
+          return;
+        }
       }
     }
 
-    // Fall back to address navigation
-    if (onGotoAddress) {
-      const num = getNumberAtPosition(e.clientX, e.clientY);
-      if (num !== null) {
-        onGotoAddress(num);
-        e.preventDefault();
-      }
+    setTimeout(() => notifySelectionChange(), 0);
+  }
+
+  function notifySelectionChange() {
+    if (!view) return;
+    const sel = view.state.selection.main;
+    const startLine = view.state.doc.lineAt(sel.from).number;
+    const endLine = view.state.doc.lineAt(sel.to).number;
+    if (onSelectionChange) {
+      onSelectionChange(startLine, endLine);
+    } else if (onLineClick && startLine === endLine) {
+      onLineClick(startLine);
     }
   }
 
@@ -360,7 +445,17 @@
         e.preventDefault();
       }
     }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home' || e.key === 'End') {
+      setTimeout(() => notifySelectionChange(), 0);
+    }
   }
+
+  const highlightLineDeco = Decoration.line({ class: 'cm-highlight-line' });
+  const highlightCompartment = new Compartment();
+
+  const highlightTheme = EditorView.theme({
+    '.cm-highlight-line': { backgroundColor: 'rgba(255, 200, 0, 0.15)' },
+  });
 
   $effect(() => {
     if (!container) return;
@@ -380,13 +475,12 @@
       ...getEditorExtensions(theme),
       EditorState.readOnly.of(true),
       search(),
+      highlightTheme,
+      highlightCompartment.of([]),
     ];
 
     if (useStaticHighlighting) {
-      extensions.push(
-        createStaticHighlighter(mode, theme),
-        EditorView.scrollMargins.of(() => ({ top: 1000000, bottom: 1000000 }))
-      );
+      extensions.push(createStaticHighlighter(mode, theme));
     } else {
       extensions.push(mode === 'decompile' ? pseudo : wat);
     }
@@ -398,6 +492,35 @@
       }),
       parent: container,
     });
+  });
+
+  $effect(() => {
+    if (!view) return;
+    if (highlightLines && highlightLines.length > 0) {
+      const decorations: any[] = [];
+      let firstLineFrom: number | null = null;
+      for (const lineNum of highlightLines) {
+        if (lineNum > 0 && lineNum <= view.state.doc.lines) {
+          const line = view.state.doc.line(lineNum);
+          decorations.push(highlightLineDeco.range(line.from));
+          if (firstLineFrom === null) firstLineFrom = line.from;
+        }
+      }
+      if (decorations.length > 0) {
+        view.dispatch({
+          effects: highlightCompartment.reconfigure(
+            EditorView.decorations.of(Decoration.set(decorations.sort((a, b) => a.from - b.from)))
+          ),
+        });
+        if (firstLineFrom !== null) {
+          view.dispatch({ effects: EditorView.scrollIntoView(firstLineFrom, { y: 'center' }) });
+        }
+      } else {
+        view.dispatch({ effects: highlightCompartment.reconfigure([]) });
+      }
+    } else {
+      view.dispatch({ effects: highlightCompartment.reconfigure([]) });
+    }
   });
 </script>
 

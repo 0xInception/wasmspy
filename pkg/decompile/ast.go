@@ -80,33 +80,44 @@ type NotExpr struct {
 }
 
 type AssignStmt struct {
-	Target Expr
-	Value  Expr
+	Target    Expr
+	Value     Expr
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 type StoreStmt struct {
-	Op     wasm.Opcode
-	Addr   Expr
-	Value  Expr
-	Offset uint32
+	Op        wasm.Opcode
+	Addr      Expr
+	Value     Expr
+	Offset    uint32
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 type CallStmt struct {
-	Call *CallExpr
+	Call      *CallExpr
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 type ReturnStmt struct {
-	Value Expr
+	Value     Expr
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 type DropStmt struct {
-	Value Expr
+	Value     Expr
+	SrcOffset uint64
+	Offsets   []uint64
 }
 
 type SwitchStmt struct {
 	Value   Expr
 	Cases   []int
 	Default int
+	Offsets []uint64
 }
 
 type SwitchCase struct {
