@@ -39,3 +39,38 @@ export interface ModuleInfo {
   tables: TableInfo[] | null;
   globals: GlobalInfo[] | null;
 }
+
+export interface Bookmark {
+  id: string;
+  modulePath: string;
+  funcIndex: number;
+  funcName: string;
+}
+
+export interface FunctionRef {
+  index: number;
+  name: string;
+}
+
+export interface XRefInfo {
+  callers: FunctionRef[];
+  callees: FunctionRef[];
+}
+
+export interface ErrorInfo {
+  offset: number;
+  opcode: string;
+  message: string;
+}
+
+export interface FunctionErrorInfo {
+  funcIndex: number;
+  funcName: string;
+  errors: ErrorInfo[];
+}
+
+export interface ModuleErrorsInfo {
+  functions: FunctionErrorInfo[] | null;
+  totalErrors: number;
+  uniqueErrors: Record<string, number>;
+}

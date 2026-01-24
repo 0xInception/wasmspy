@@ -55,6 +55,49 @@ func DecompileModule(module *wasm.ResolvedModule) string {
 	return b.String()
 }
 
+type FunctionError struct {
+	FuncIndex uint32
+	FuncName  string
+	Errors    []DecompileError
+}
+
+type ModuleErrors struct {
+	Functions    []FunctionError
+	TotalErrors  int
+	UniqueErrors map[string]int // opcode -> count
+}
+
+func CollectErrors(module *wasm.ResolvedModule) *ModuleErrors {
+	result := &ModuleErrors{
+		UniqueErrors: make(map[string]int),
+	}
+
+	for i, fn := range module.Functions {
+		if fn.Imported {
+			continue
+		}
+		body := BuildStatements(&module.Functions[i], module)
+		if len(body.Errors) > 0 {
+			funcErr := FunctionError{
+				FuncIndex: fn.Index,
+				FuncName:  fn.Name,
+				Errors:    body.Errors,
+			}
+			result.Functions = append(result.Functions, funcErr)
+			result.TotalErrors += len(body.Errors)
+			for _, e := range body.Errors {
+				key := e.Opcode
+				if key == "" {
+					key = e.Message
+				}
+				result.UniqueErrors[key]++
+			}
+		}
+	}
+
+	return result
+}
+
 func formatSignature(fn *wasm.ResolvedFunction, ctx *codegenCtx) string {
 	name := fn.Name
 	if name == "" {
@@ -195,6 +238,9 @@ func writeStmt(b *strings.Builder, stmt Stmt, indent int, ctx *codegenCtx) {
 
 	case *ContinueStmt:
 		b.WriteString(fmt.Sprintf("%scontinue\n", prefix))
+
+	case *ErrorStmt:
+		b.WriteString(fmt.Sprintf("%s// ERROR at 0x%x: %s\n", prefix, s.Offset, s.Message))
 	}
 }
 
@@ -229,6 +275,8 @@ func exprStr(e Expr, ctx *codegenCtx) string {
 		return fmt.Sprintf("-%s", exprStr(v.Arg, ctx))
 	case *NotExpr:
 		return fmt.Sprintf("!(%s)", exprStr(v.Arg, ctx))
+	case *ErrorExpr:
+		return fmt.Sprintf("/* ERROR at 0x%x: %s */", v.Offset, v.Message)
 	}
 	return "?"
 }

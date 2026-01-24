@@ -2,6 +2,7 @@ package wasm
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 )
 
@@ -14,6 +15,18 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 		op := Opcode(code[pc])
 		pc++
 
+		if op == OpMiscPrefix {
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading misc opcode")
+			}
+			subOp, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid misc sub-opcode")
+			}
+			pc += n
+			op = Opcode(0xfc00 | (subOp & 0xff))
+		}
+
 		instr := Instruction{
 			Offset: uint64(baseOffset + startPC),
 			Opcode: op,
@@ -22,7 +35,7 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 		if name, ok := OpcodeNames[op]; ok {
 			instr.Name = name
 		} else {
-			instr.Name = "unknown"
+			instr.Name = fmt.Sprintf("unknown (0x%x)", op)
 		}
 
 		switch op {
@@ -175,6 +188,80 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 			val := math.Float64frombits(bits)
 			instr.Immediates = append(instr.Immediates, val)
 			pc += 8
+
+		case OpMemoryInit:
+			dataIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid memory.init data index")
+			}
+			pc += n
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading memory.init")
+			}
+			pc++
+			instr.Immediates = append(instr.Immediates, dataIdx)
+
+		case OpDataDrop:
+			dataIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid data.drop index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, dataIdx)
+
+		case OpMemoryCopy:
+			if pc+2 > len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading memory.copy")
+			}
+			pc += 2
+
+		case OpMemoryFill:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading memory.fill")
+			}
+			pc++
+
+		case OpTableInit:
+			elemIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table.init elem index")
+			}
+			pc += n
+			tableIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table.init table index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, elemIdx, tableIdx)
+
+		case OpElemDrop:
+			elemIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid elem.drop index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, elemIdx)
+
+		case OpTableCopy:
+			dstIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table.copy dst index")
+			}
+			pc += n
+			srcIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table.copy src index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, dstIdx, srcIdx)
+
+		case OpTableGrow, OpTableSize, OpTableFill:
+			tableIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid table index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, tableIdx)
 		}
 
 		instructions = append(instructions, instr)

@@ -127,6 +127,18 @@ type WhileStmt struct {
 
 type ContinueStmt struct{}
 
+type ErrorExpr struct {
+	Message string
+	Offset  uint64
+	Opcode  string
+}
+
+type ErrorStmt struct {
+	Message string
+	Offset  uint64
+	Opcode  string
+}
+
 func (*LocalExpr) node()   {}
 func (*GlobalExpr) node()  {}
 func (*ConstExpr) node()   {}
@@ -138,6 +150,7 @@ func (*LoadExpr) node()    {}
 func (*TernaryExpr) node() {}
 func (*NegExpr) node()     {}
 func (*NotExpr) node()     {}
+func (*ErrorExpr) node()   {}
 
 func (*LocalExpr) expr()   {}
 func (*GlobalExpr) expr()  {}
@@ -150,6 +163,7 @@ func (*LoadExpr) expr()    {}
 func (*TernaryExpr) expr() {}
 func (*NegExpr) expr()     {}
 func (*NotExpr) expr()     {}
+func (*ErrorExpr) expr()   {}
 
 func (*AssignStmt) node()  {}
 func (*StoreStmt) node()   {}
@@ -160,6 +174,7 @@ func (*SwitchStmt) node()     {}
 func (*FlatSwitchStmt) node() {}
 func (*WhileStmt) node()      {}
 func (*ContinueStmt) node()   {}
+func (*ErrorStmt) node()      {}
 
 func (*AssignStmt) stmt()  {}
 func (*StoreStmt) stmt()   {}
@@ -170,3 +185,4 @@ func (*SwitchStmt) stmt()     {}
 func (*FlatSwitchStmt) stmt() {}
 func (*WhileStmt) stmt()      {}
 func (*ContinueStmt) stmt()   {}
+func (*ErrorStmt) stmt()      {}

@@ -210,17 +210,17 @@ func opSymbol(op wasm.Opcode) string {
 		return "<<"
 	case wasm.OpI32ShrS, wasm.OpI32ShrU, wasm.OpI64ShrS, wasm.OpI64ShrU:
 		return ">>"
-	case wasm.OpI32Eq, wasm.OpI64Eq:
+	case wasm.OpI32Eq, wasm.OpI64Eq, wasm.OpF64Eq:
 		return "=="
-	case wasm.OpI32Ne, wasm.OpI64Ne:
+	case wasm.OpI32Ne, wasm.OpI64Ne, wasm.OpF64Ne:
 		return "!="
-	case wasm.OpI32LtS, wasm.OpI32LtU, wasm.OpI64LtS, wasm.OpI64LtU:
+	case wasm.OpI32LtS, wasm.OpI32LtU, wasm.OpI64LtS, wasm.OpI64LtU, wasm.OpF64Lt:
 		return "<"
-	case wasm.OpI32GtS, wasm.OpI32GtU, wasm.OpI64GtS, wasm.OpI64GtU:
+	case wasm.OpI32GtS, wasm.OpI32GtU, wasm.OpI64GtS, wasm.OpI64GtU, wasm.OpF64Gt:
 		return ">"
-	case wasm.OpI32LeS, wasm.OpI32LeU, wasm.OpI64LeS, wasm.OpI64LeU:
+	case wasm.OpI32LeS, wasm.OpI32LeU, wasm.OpI64LeS, wasm.OpI64LeU, wasm.OpF64Le:
 		return "<="
-	case wasm.OpI32GeS, wasm.OpI32GeU, wasm.OpI64GeS, wasm.OpI64GeU:
+	case wasm.OpI32GeS, wasm.OpI32GeU, wasm.OpI64GeS, wasm.OpI64GeU, wasm.OpF64Ge:
 		return ">="
 	}
 	return wasm.OpcodeNames[op]
@@ -240,6 +240,16 @@ func opName(op wasm.Opcode) string {
 		return "i32"
 	case wasm.OpI64ExtendI32S, wasm.OpI64ExtendI32U:
 		return "i64"
+	case wasm.OpI32TruncSatF32S, wasm.OpI32TruncSatF32U,
+		wasm.OpI32TruncSatF64S, wasm.OpI32TruncSatF64U:
+		return "i32_trunc_sat"
+	case wasm.OpI64TruncSatF32S, wasm.OpI64TruncSatF32U,
+		wasm.OpI64TruncSatF64S, wasm.OpI64TruncSatF64U:
+		return "i64_trunc_sat"
+	case wasm.OpI64ReinterpretF64:
+		return "i64_reinterpret"
+	case wasm.OpF64ReinterpretI64:
+		return "f64_reinterpret"
 	}
 	return wasm.OpcodeNames[op]
 }

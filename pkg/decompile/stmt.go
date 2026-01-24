@@ -1,6 +1,11 @@
 package decompile
 
-import "github.com/0xInception/wasmspy/pkg/wasm"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/0xInception/wasmspy/pkg/wasm"
+)
 
 type Block struct {
 	Kind       BlockKind
@@ -9,7 +14,8 @@ type Block struct {
 	Else       []Stmt
 	Cond       Expr
 	Result     wasm.ValType
-	ThenResult Expr // saved at OpElse for value-producing if blocks
+	ThenResult Expr
+	StackDepth int
 }
 
 type BlockKind int
@@ -54,6 +60,13 @@ func (*BreakStmt) stmt() {}
 type FuncBody struct {
 	Stmts  []Stmt
 	Return Expr
+	Errors []DecompileError
+}
+
+type DecompileError struct {
+	Offset  uint64
+	Opcode  string
+	Message string
 }
 
 func BuildStatements(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) *FuncBody {
@@ -71,18 +84,22 @@ func BuildStatements(fn *wasm.ResolvedFunction, module *wasm.ResolvedModule) *Fu
 }
 
 type stmtBuilder struct {
-	fn      *wasm.ResolvedFunction
-	module  *wasm.ResolvedModule
-	locals  []*Value
-	stack   []*Value
-	blocks  []*Block
-	stmts   []Stmt
-	labelID int
+	fn          *wasm.ResolvedFunction
+	module      *wasm.ResolvedModule
+	locals      []*Value
+	stack       []*Value
+	blocks      []*Block
+	stmts       []Stmt
+	labelID     int
+	currInstr   *wasm.Instruction
+	unreachable bool
+	errors      []DecompileError
 }
 
 func (b *stmtBuilder) build() *FuncBody {
 	for i := range b.fn.Body.Instructions {
 		instr := &b.fn.Body.Instructions[i]
+		b.currInstr = instr
 		b.processInstr(instr)
 	}
 
@@ -94,7 +111,16 @@ func (b *stmtBuilder) build() *FuncBody {
 	return &FuncBody{
 		Stmts:  b.stmts,
 		Return: ret,
+		Errors: b.errors,
 	}
+}
+
+func (b *stmtBuilder) recordError(offset uint64, opcode, message string) {
+	b.errors = append(b.errors, DecompileError{
+		Offset:  offset,
+		Opcode:  opcode,
+		Message: message,
+	})
 }
 
 func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
@@ -102,33 +128,49 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 	case wasm.OpBlock:
 		b.labelID++
 		result := parseBlockType(instr)
-		b.blocks = append(b.blocks, &Block{Kind: BlockPlain, Label: b.labelID, Result: result})
+		b.blocks = append(b.blocks, &Block{
+			Kind:       BlockPlain,
+			Label:      b.labelID,
+			Result:     result,
+			StackDepth: len(b.stack),
+		})
+		b.unreachable = false
 
 	case wasm.OpLoop:
 		b.labelID++
 		result := parseBlockType(instr)
-		b.blocks = append(b.blocks, &Block{Kind: BlockLoop, Label: b.labelID, Result: result})
+		b.blocks = append(b.blocks, &Block{
+			Kind:       BlockLoop,
+			Label:      b.labelID,
+			Result:     result,
+			StackDepth: len(b.stack),
+		})
+		b.unreachable = false
 
 	case wasm.OpIf:
 		b.labelID++
 		result := parseBlockType(instr)
 		cond := b.pop()
 		b.blocks = append(b.blocks, &Block{
-			Kind:   BlockIf,
-			Label:  b.labelID,
-			Cond:   ValueToExpr(cond),
-			Stmts:  []Stmt{},
-			Result: result,
+			Kind:       BlockIf,
+			Label:      b.labelID,
+			Cond:       ValueToExpr(cond),
+			Stmts:      []Stmt{},
+			Result:     result,
+			StackDepth: len(b.stack),
 		})
+		b.unreachable = false
 
 	case wasm.OpElse:
 		if len(b.blocks) > 0 {
 			block := b.blocks[len(b.blocks)-1]
-			if block.Result != 0 && len(b.stack) > 0 {
+			if block.Result != 0 && len(b.stack) > block.StackDepth {
 				block.ThenResult = ValueToExpr(b.pop())
 			}
 			block.Else = block.Stmts
 			block.Stmts = []Stmt{}
+			b.unreachable = false
+			b.stack = b.stack[:block.StackDepth]
 		}
 
 	case wasm.OpEnd:
@@ -136,26 +178,31 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			block := b.blocks[len(b.blocks)-1]
 			b.blocks = b.blocks[:len(b.blocks)-1]
 
+			b.stack = b.stack[:block.StackDepth]
+
 			if block.Kind == BlockIf && block.Result != 0 {
-				var elseResult Expr
-				if len(b.stack) > 0 {
-					elseResult = ValueToExpr(b.pop())
-				}
 				b.push(&Value{
 					Type:   block.Result,
 					Source: SourceOp,
 					Op: &OpValue{
-						Instr:  nil,
-						Inputs: nil,
+						Instr:   nil,
+						Inputs:  nil,
 						Ternary: &TernaryValue{
 							Cond:       block.Cond,
 							ThenResult: block.ThenResult,
-							ElseResult: elseResult,
+							ElseResult: nil,
 						},
 					},
 				})
-				return
+			} else if block.Result != 0 {
+				b.push(&Value{
+					Type:   block.Result,
+					Source: SourceConst,
+					Const:  int32(0),
+				})
 			}
+
+			b.unreachable = false
 
 			var stmt Stmt
 			switch block.Kind {
@@ -174,10 +221,14 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			}
 		}
 
+	case wasm.OpUnreachable:
+		b.unreachable = true
+
 	case wasm.OpBr:
 		label := getU32(instr.Immediates, 0)
 		target := b.getBlockLabel(int(label))
 		b.emit(&BreakStmt{Label: target})
+		b.unreachable = true
 
 	case wasm.OpBrIf:
 		label := getU32(instr.Immediates, 0)
@@ -196,6 +247,7 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			def := b.getBlockLabel(int(labels[len(labels)-1]))
 			b.emit(&SwitchStmt{Value: ValueToExpr(idx), Cases: cases, Default: def})
 		}
+		b.unreachable = true
 
 	case wasm.OpLocalSet:
 		idx := getU32(instr.Immediates, 0)
@@ -248,12 +300,37 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		val := b.pop()
 		b.emit(&DropStmt{Value: ValueToExpr(val)})
 
+	case wasm.OpSelect:
+		cond := b.pop()
+		val2 := b.pop()
+		val1 := b.pop()
+		resultType := wasm.ValI32
+		if val1 != nil {
+			resultType = val1.Type
+		} else if val2 != nil {
+			resultType = val2.Type
+		}
+		b.push(&Value{
+			Type:   resultType,
+			Source: SourceOp,
+			Op: &OpValue{
+				Instr:  instr,
+				Inputs: []*Value{val1, val2, cond},
+				Ternary: &TernaryValue{
+					Cond:       ValueToExpr(cond),
+					ThenResult: ValueToExpr(val1),
+					ElseResult: ValueToExpr(val2),
+				},
+			},
+		})
+
 	case wasm.OpReturn:
 		var val Expr
 		if len(b.stack) > 0 {
 			val = ValueToExpr(b.pop())
 		}
 		b.emit(&ReturnStmt{Value: val})
+		b.unreachable = true
 
 	case wasm.OpCall:
 		idx := getU32(instr.Immediates, 0)
@@ -282,6 +359,33 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			} else {
 				b.emit(&CallStmt{Call: call})
 			}
+		}
+
+	case wasm.OpCallIndirect:
+		typeIdx := getU32(instr.Immediates, 0)
+		funcIdx := b.pop()
+		var sig *wasm.FuncType
+		if b.module != nil && int(typeIdx) < len(b.module.Types) {
+			sig = &b.module.Types[typeIdx]
+		}
+		if sig != nil {
+			args := make([]Expr, len(sig.Params)+1)
+			args[0] = ValueToExpr(funcIdx)
+			for i := len(sig.Params) - 1; i >= 0; i-- {
+				args[i+1] = ValueToExpr(b.pop())
+			}
+			call := &CallExpr{FuncIndex: 0xFFFFFFFF, Args: args}
+			if len(sig.Results) > 0 {
+				b.push(&Value{
+					Type:   sig.Results[0],
+					Source: SourceOp,
+					Op:     &OpValue{Instr: instr, Inputs: nil},
+				})
+			} else {
+				b.emit(&CallStmt{Call: call})
+			}
+		} else {
+			b.emit(&CallStmt{Call: &CallExpr{FuncIndex: 0xFFFFFFFF, Args: []Expr{ValueToExpr(funcIdx)}}})
 		}
 
 	default:
@@ -340,6 +444,18 @@ func (b *stmtBuilder) simulateOp(instr *wasm.Instruction) {
 					Op:     &OpValue{Instr: instr, Inputs: inputs},
 				})
 			}
+		} else {
+			name := instr.Name
+			if !strings.Contains(name, "0x") {
+				name = fmt.Sprintf("%s (0x%x)", name, instr.Opcode)
+			}
+			msg := fmt.Sprintf("unsupported: %s", name)
+			b.emit(&ErrorStmt{
+				Message: msg,
+				Offset:  instr.Offset,
+				Opcode:  instr.Name,
+			})
+			b.recordError(instr.Offset, instr.Name, msg)
 		}
 	}
 }
@@ -350,7 +466,32 @@ func (b *stmtBuilder) push(v *Value) {
 
 func (b *stmtBuilder) pop() *Value {
 	if len(b.stack) == 0 {
-		return nil
+		if b.unreachable {
+			return &Value{
+				Type:   wasm.ValI32,
+				Source: SourceConst,
+				Const:  int32(0),
+			}
+		}
+		var offset uint64
+		var opcode string
+		var msg string
+		if b.currInstr != nil {
+			offset = b.currInstr.Offset
+			opcode = b.currInstr.Name
+			msg = fmt.Sprintf("stack underflow at %s (0x%x)", b.currInstr.Name, b.currInstr.Opcode)
+		} else {
+			msg = "stack underflow"
+		}
+		b.recordError(offset, opcode, msg)
+		return &Value{
+			Type:   wasm.ValI32,
+			Source: SourceError,
+			Error: &ErrorValue{
+				Message: msg,
+				Offset:  offset,
+			},
+		}
 	}
 	v := b.stack[len(b.stack)-1]
 	b.stack = b.stack[:len(b.stack)-1]

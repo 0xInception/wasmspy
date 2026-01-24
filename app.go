@@ -259,6 +259,16 @@ type DataSegInfo struct {
 	Size   int `json:"size"`
 }
 
+type FunctionRef struct {
+	Index uint32 `json:"index"`
+	Name  string `json:"name"`
+}
+
+type XRefInfo struct {
+	Callers []FunctionRef `json:"callers"`
+	Callees []FunctionRef `json:"callees"`
+}
+
 func (a *App) GetMemoryData(path string, memIndex int, offset int, length int) (*MemoryData, error) {
 	module := a.modules[path]
 	if module == nil {
@@ -292,6 +302,96 @@ func (a *App) GetMemoryData(path string, memIndex int, offset int, length int) (
 		Offset:    offset,
 		Segments:  segments,
 	}, nil
+}
+
+func (a *App) GetXRefs(path string, funcIndex uint32) (*XRefInfo, error) {
+	module := a.modules[path]
+	if module == nil {
+		return nil, fmt.Errorf("module not loaded: %s", path)
+	}
+
+	cg := decompile.BuildCallGraph(module)
+	info := &XRefInfo{
+		Callers: []FunctionRef{},
+		Callees: []FunctionRef{},
+	}
+
+	for _, callerIdx := range cg.Callers[funcIndex] {
+		fn := module.GetFunction(callerIdx)
+		name := ""
+		if fn != nil {
+			name = fn.Name
+		}
+		if name == "" {
+			name = fmt.Sprintf("func_%d", callerIdx)
+		}
+		info.Callers = append(info.Callers, FunctionRef{Index: callerIdx, Name: name})
+	}
+
+	for _, calleeIdx := range cg.Callees[funcIndex] {
+		fn := module.GetFunction(calleeIdx)
+		name := ""
+		if fn != nil {
+			name = fn.Name
+		}
+		if name == "" {
+			name = fmt.Sprintf("func_%d", calleeIdx)
+		}
+		info.Callees = append(info.Callees, FunctionRef{Index: calleeIdx, Name: name})
+	}
+
+	return info, nil
+}
+
+type ErrorInfo struct {
+	Offset  uint64 `json:"offset"`
+	Opcode  string `json:"opcode"`
+	Message string `json:"message"`
+}
+
+type FunctionErrorInfo struct {
+	FuncIndex uint32      `json:"funcIndex"`
+	FuncName  string      `json:"funcName"`
+	Errors    []ErrorInfo `json:"errors"`
+}
+
+type ModuleErrorsInfo struct {
+	Functions    []FunctionErrorInfo `json:"functions"`
+	TotalErrors  int                 `json:"totalErrors"`
+	UniqueErrors map[string]int      `json:"uniqueErrors"`
+}
+
+func (a *App) GetModuleErrors(path string) (*ModuleErrorsInfo, error) {
+	module := a.modules[path]
+	if module == nil {
+		return nil, fmt.Errorf("module not loaded: %s", path)
+	}
+
+	errors := decompile.CollectErrors(module)
+	result := &ModuleErrorsInfo{
+		TotalErrors:  errors.TotalErrors,
+		UniqueErrors: errors.UniqueErrors,
+	}
+
+	for _, fe := range errors.Functions {
+		funcErr := FunctionErrorInfo{
+			FuncIndex: fe.FuncIndex,
+			FuncName:  fe.FuncName,
+		}
+		if funcErr.FuncName == "" {
+			funcErr.FuncName = fmt.Sprintf("func_%d", fe.FuncIndex)
+		}
+		for _, e := range fe.Errors {
+			funcErr.Errors = append(funcErr.Errors, ErrorInfo{
+				Offset:  e.Offset,
+				Opcode:  e.Opcode,
+				Message: e.Message,
+			})
+		}
+		result.Functions = append(result.Functions, funcErr)
+	}
+
+	return result, nil
 }
 
 func getDataSegOffset(instrs []wasm.Instruction) uint32 {

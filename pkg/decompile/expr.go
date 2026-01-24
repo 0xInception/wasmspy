@@ -20,6 +20,14 @@ func ValueToExpr(v *Value) Expr {
 		return opToExpr(v)
 	case SourceMemory:
 		return opToExpr(v)
+	case SourceError:
+		if v.Error != nil {
+			return &ErrorExpr{
+				Message: v.Error.Message,
+				Offset:  v.Error.Offset,
+				Opcode:  v.Error.Opcode,
+			}
+		}
 	}
 	return nil
 }

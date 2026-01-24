@@ -18,8 +18,7 @@ var OpSignatures = map[wasm.Opcode]Signature{
 	wasm.OpReturn:      {},
 	wasm.OpEnd:         {},
 
-	wasm.OpDrop:   {Inputs: []wasm.ValType{i32}},
-	wasm.OpSelect: {Inputs: []wasm.ValType{i32, i32, i32}, Outputs: []wasm.ValType{i32}},
+	wasm.OpDrop: {Inputs: []wasm.ValType{i32}},
 
 	wasm.OpI32Const: {Outputs: []wasm.ValType{i32}},
 	wasm.OpI64Const: {Outputs: []wasm.ValType{i64}},
@@ -92,6 +91,16 @@ var OpSignatures = map[wasm.Opcode]Signature{
 	wasm.OpI64ExtendI32S: {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{i64}},
 	wasm.OpI64ExtendI32U: {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{i64}},
 
+	wasm.OpF64Eq: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpF64Ne: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpF64Lt: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpF64Gt: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpF64Le: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpF64Ge: {Inputs: []wasm.ValType{f64, f64}, Outputs: []wasm.ValType{i32}},
+
+	wasm.OpI64ReinterpretF64: {Inputs: []wasm.ValType{f64}, Outputs: []wasm.ValType{i64}},
+	wasm.OpF64ReinterpretI64: {Inputs: []wasm.ValType{i64}, Outputs: []wasm.ValType{f64}},
+
 	wasm.OpI32Load:    {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{i32}},
 	wasm.OpI64Load:    {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{i64}},
 	wasm.OpF32Load:    {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{f32}},
@@ -122,4 +131,24 @@ var OpSignatures = map[wasm.Opcode]Signature{
 
 	wasm.OpBr:   {},
 	wasm.OpBrIf: {Inputs: []wasm.ValType{i32}},
+
+	wasm.OpI32TruncSatF32S: {Inputs: []wasm.ValType{f32}, Outputs: []wasm.ValType{i32}},
+	wasm.OpI32TruncSatF32U: {Inputs: []wasm.ValType{f32}, Outputs: []wasm.ValType{i32}},
+	wasm.OpI32TruncSatF64S: {Inputs: []wasm.ValType{f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpI32TruncSatF64U: {Inputs: []wasm.ValType{f64}, Outputs: []wasm.ValType{i32}},
+	wasm.OpI64TruncSatF32S: {Inputs: []wasm.ValType{f32}, Outputs: []wasm.ValType{i64}},
+	wasm.OpI64TruncSatF32U: {Inputs: []wasm.ValType{f32}, Outputs: []wasm.ValType{i64}},
+	wasm.OpI64TruncSatF64S: {Inputs: []wasm.ValType{f64}, Outputs: []wasm.ValType{i64}},
+	wasm.OpI64TruncSatF64U: {Inputs: []wasm.ValType{f64}, Outputs: []wasm.ValType{i64}},
+
+	wasm.OpMemoryInit: {Inputs: []wasm.ValType{i32, i32, i32}},
+	wasm.OpDataDrop:   {},
+	wasm.OpMemoryCopy: {Inputs: []wasm.ValType{i32, i32, i32}},
+	wasm.OpMemoryFill: {Inputs: []wasm.ValType{i32, i32, i32}},
+	wasm.OpTableInit:  {Inputs: []wasm.ValType{i32, i32, i32}},
+	wasm.OpElemDrop:   {},
+	wasm.OpTableCopy:  {Inputs: []wasm.ValType{i32, i32, i32}},
+	wasm.OpTableGrow:  {Inputs: []wasm.ValType{i32, i32}, Outputs: []wasm.ValType{i32}},
+	wasm.OpTableSize:  {Outputs: []wasm.ValType{i32}},
+	wasm.OpTableFill:  {Inputs: []wasm.ValType{i32, i32, i32}},
 }

@@ -11,6 +11,7 @@ const (
 	SourceOp
 	SourceParam
 	SourceMemory
+	SourceError
 )
 
 type Value struct {
@@ -19,6 +20,13 @@ type Value struct {
 	Index  uint32
 	Const  any
 	Op     *OpValue
+	Error  *ErrorValue
+}
+
+type ErrorValue struct {
+	Message string
+	Offset  uint64
+	Opcode  string
 }
 
 type OpValue struct {

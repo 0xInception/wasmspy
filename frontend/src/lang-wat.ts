@@ -69,7 +69,7 @@ export const wat = StreamLanguage.define({
     if (stream.match(/[()]/)) return 'paren';
 
     const word = stream.match(/[\w.]+/);
-    if (word) {
+    if (word && typeof word !== 'boolean') {
       const w = word[0];
       if (keywords.has(w)) return 'keyword';
       if (types.has(w)) return 'typeName';

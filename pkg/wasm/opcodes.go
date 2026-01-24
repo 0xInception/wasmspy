@@ -1,6 +1,6 @@
 package wasm
 
-type Opcode byte
+type Opcode uint16
 
 const (
 	OpUnreachable Opcode = 0x00
@@ -119,9 +119,40 @@ const (
 	OpI64Rotl   Opcode = 0x89
 	OpI64Rotr   Opcode = 0x8a
 
-	OpI32WrapI64   Opcode = 0xa7
-	OpI64ExtendI32S Opcode = 0xac
-	OpI64ExtendI32U Opcode = 0xad
+	OpF64Eq Opcode = 0x60
+	OpF64Ne Opcode = 0x61
+	OpF64Lt Opcode = 0x62
+	OpF64Gt Opcode = 0x63
+	OpF64Le Opcode = 0x64
+	OpF64Ge Opcode = 0x65
+
+	OpI32WrapI64      Opcode = 0xa7
+	OpI64ExtendI32S   Opcode = 0xac
+	OpI64ExtendI32U   Opcode = 0xad
+	OpI64ReinterpretF64 Opcode = 0xbd
+	OpF64ReinterpretI64 Opcode = 0xbf
+
+	OpMiscPrefix Opcode = 0xfc
+
+	OpI32TruncSatF32S Opcode = 0xfc00
+	OpI32TruncSatF32U Opcode = 0xfc01
+	OpI32TruncSatF64S Opcode = 0xfc02
+	OpI32TruncSatF64U Opcode = 0xfc03
+	OpI64TruncSatF32S Opcode = 0xfc04
+	OpI64TruncSatF32U Opcode = 0xfc05
+	OpI64TruncSatF64S Opcode = 0xfc06
+	OpI64TruncSatF64U Opcode = 0xfc07
+
+	OpMemoryInit Opcode = 0xfc08
+	OpDataDrop   Opcode = 0xfc09
+	OpMemoryCopy Opcode = 0xfc0a
+	OpMemoryFill Opcode = 0xfc0b
+	OpTableInit  Opcode = 0xfc0c
+	OpElemDrop   Opcode = 0xfc0d
+	OpTableCopy  Opcode = 0xfc0e
+	OpTableGrow  Opcode = 0xfc0f
+	OpTableSize  Opcode = 0xfc10
+	OpTableFill  Opcode = 0xfc11
 )
 
 var OpcodeNames = map[Opcode]string{
@@ -241,7 +272,36 @@ var OpcodeNames = map[Opcode]string{
 	0x89: "i64.rotl",
 	0x8a: "i64.rotr",
 
+	0x60: "f64.eq",
+	0x61: "f64.ne",
+	0x62: "f64.lt",
+	0x63: "f64.gt",
+	0x64: "f64.le",
+	0x65: "f64.ge",
+
 	0xa7: "i32.wrap_i64",
 	0xac: "i64.extend_i32_s",
 	0xad: "i64.extend_i32_u",
+	0xbd: "i64.reinterpret_f64",
+	0xbf: "f64.reinterpret_i64",
+
+	0xfc00: "i32.trunc_sat_f32_s",
+	0xfc01: "i32.trunc_sat_f32_u",
+	0xfc02: "i32.trunc_sat_f64_s",
+	0xfc03: "i32.trunc_sat_f64_u",
+	0xfc04: "i64.trunc_sat_f32_s",
+	0xfc05: "i64.trunc_sat_f32_u",
+	0xfc06: "i64.trunc_sat_f64_s",
+	0xfc07: "i64.trunc_sat_f64_u",
+
+	0xfc08: "memory.init",
+	0xfc09: "data.drop",
+	0xfc0a: "memory.copy",
+	0xfc0b: "memory.fill",
+	0xfc0c: "table.init",
+	0xfc0d: "elem.drop",
+	0xfc0e: "table.copy",
+	0xfc0f: "table.grow",
+	0xfc10: "table.size",
+	0xfc11: "table.fill",
 }
