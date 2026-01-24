@@ -1,9 +1,16 @@
-cool
+# wasmspy
 
-![Screenshot 1](assets/1.png)
+![Dashboard Preview](assets/1.png)
 
-![Screenshot 2](assets/2.png)
+> **Note:** This project is currently under active development. There are no stable releases at this time.
 
-https://webassembly.github.io/spec/core/_download/WebAssembly.pdf
+## Getting Started
 
-https://webassembly.github.io/spec/core/
+### Prerequisites
+You need to have **[Wails](https://wails.io/docs/gettingstarted/installation/)** installed to run this project.
+
+### Installation
+```bash
+git clone https://github.com/0xInception/wasmspy
+cd wasmspy
+wails dev
