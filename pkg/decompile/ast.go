@@ -129,14 +129,18 @@ type FlatSwitchStmt struct {
 	Value   Expr
 	Cases   []SwitchCase
 	Default []Stmt
+	Offsets []uint64
 }
 
 type WhileStmt struct {
-	Cond Expr
-	Body []Stmt
+	Cond    Expr
+	Body    []Stmt
+	Offsets []uint64
 }
 
-type ContinueStmt struct{}
+type ContinueStmt struct {
+	Offsets []uint64
+}
 
 type ErrorExpr struct {
 	Message string

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark } from './types';
+  import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark, Annotations } from './types';
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte';
 
   type GroupedFunctions = [string, FunctionInfo[]][];
@@ -12,6 +12,7 @@
     functionsByName: Map<string, FunctionInfo>;
     groupedFunctions: GroupedFunctions;
     groupedImports: GroupedFunctions;
+    annotations: Annotations;
   }
 
   let {
@@ -35,6 +36,8 @@
     onRemoveBookmark,
     isBookmarked,
     getErrorCount,
+    onRenameFunction,
+    onOpenSettings,
   }: {
     modules: LoadedModule[];
     modulesByPath: Map<string, LoadedModule>;
@@ -45,7 +48,7 @@
     bookmarks: Bookmark[];
     onSelectModule: (index: number) => void;
     onCloseModule: (index: number) => void;
-    onSelectFunction: (fn: FunctionInfo) => void;
+    onSelectFunction: (fn: FunctionInfo, preview?: boolean) => void;
     onSelectMemory: (mem: MemoryInfo) => void;
     onSelectTable: (tbl: TableInfo) => void;
     onSelectGlobal: (glob: GlobalInfo) => void;
@@ -56,6 +59,8 @@
     onRemoveBookmark: (id: string) => void;
     isBookmarked: (modulePath: string, funcIndex: number) => boolean;
     getErrorCount: (modulePath: string, funcIndex: number) => number;
+    onRenameFunction: (fn: FunctionInfo) => void;
+    onOpenSettings?: () => void;
   } = $props();
 
   let expanded: Record<string, boolean> = $state({});
@@ -85,6 +90,7 @@
       x: e.clientX,
       y: e.clientY,
       items: [
+        { label: 'Add nickname', action: () => onRenameFunction(fn) },
         { label: bookmarked ? 'Remove bookmark' : 'Bookmark', action: () => onToggleBookmark(fn) },
         { label: 'Copy name', action: () => navigator.clipboard.writeText(fn.name) },
         { label: 'Copy index', action: () => navigator.clipboard.writeText(String(fn.index)) },
@@ -117,12 +123,65 @@
   let activeBookmarks = $derived(
     bookmarks.filter(b => modulesByPath.has(b.modulePath))
   );
+
+  let flatFunctions = $derived.by(() => {
+    if (activeModuleIndex < 0) return [];
+    const mod = modules[activeModuleIndex];
+    if (!mod) return [];
+    const result: FunctionInfo[] = [];
+    for (const [, fns] of mod.groupedFunctions) {
+      for (const fn of getFilteredFunctions(fns)) {
+        result.push(fn);
+      }
+    }
+    return result;
+  });
+
+  let explorerEl: HTMLElement;
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (flatFunctions.length === 0) return;
+    if (!selected.startsWith('func-')) return;
+
+    e.preventDefault();
+    const currentIdx = parseInt(selected.slice(5));
+    const currentPos = flatFunctions.findIndex(fn => fn.index === currentIdx);
+
+    let newPos: number;
+    if (e.key === 'ArrowUp') {
+      newPos = currentPos <= 0 ? flatFunctions.length - 1 : currentPos - 1;
+    } else {
+      newPos = currentPos >= flatFunctions.length - 1 ? 0 : currentPos + 1;
+    }
+
+    const newFn = flatFunctions[newPos];
+    if (newFn) {
+      onSelectFunction(newFn, true);
+    }
+  }
 </script>
 
-<aside class="h-full overflow-auto text-sm flex flex-col" style="background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border); color: var(--sidebar-fg);">
+<aside
+  bind:this={explorerEl}
+  class="h-full overflow-auto text-sm flex flex-col outline-none"
+  style="background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border); color: var(--sidebar-fg);"
+  tabindex="0"
+  onkeydown={handleKeydown}
+>
   <div class="p-2 text-xs uppercase tracking-wide flex items-center justify-between" style="border-bottom: 1px solid var(--sidebar-border); color: var(--sidebar-fg); opacity: 0.7;">
     <span>Explorer</span>
-    <button class="px-1 opacity-60 hover:opacity-100" onclick={onOpenFile} title="Open file">+</button>
+    <div class="flex items-center gap-1">
+      {#if onOpenSettings}
+        <button class="px-1 opacity-60 hover:opacity-100" onclick={onOpenSettings} title="Settings">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+          </svg>
+        </button>
+      {/if}
+      <button class="px-1 opacity-60 hover:opacity-100" onclick={onOpenFile} title="Open file">+</button>
+    </div>
   </div>
   {#if modules.length > 0}
     <div class="px-2 py-1.5" style="border-bottom: 1px solid var(--sidebar-border);">
@@ -160,7 +219,7 @@
               {@const mod = modulesByPath.get(bookmark.modulePath)}
               <button
                 class="flex items-center gap-1 w-full px-2 py-0.5 hover:bg-gray-800 rounded text-left text-xs"
-                onclick={() => onSelectBookmark(bookmark)}
+                onclick={() => { onSelectBookmark(bookmark); explorerEl?.focus(); }}
                 oncontextmenu={(e) => showBookmarkContextMenu(e, bookmark)}
               >
                 <span class="w-3" style="color: var(--icon-function);">f</span>
@@ -234,7 +293,7 @@
                           {@const errCount = getErrorCount(mod.path, fn.index)}
                           <button
                             class="flex items-center gap-1 w-full px-2 py-0.5 hover:bg-gray-800 rounded text-left text-xs {isActive && selected === `func-${fn.index}` ? 'bg-blue-600/30' : ''}"
-                            onclick={() => { onSelectModule(modIndex); onSelectFunction(fn); }}
+                            onclick={() => { onSelectModule(modIndex); onSelectFunction(fn); explorerEl?.focus(); }}
                             oncontextmenu={(e) => showFnContextMenu(e, fn, mod.path)}
                           >
                             <span class="w-3" style="color: var(--icon-function);">{fnBookmarked ? '★' : 'f'}</span>
@@ -275,7 +334,7 @@
                           {@const fnBookmarked = isBookmarked(mod.path, fn.index)}
                           <button
                             class="flex items-center gap-1 w-full px-2 py-0.5 hover:bg-gray-800 rounded text-left text-xs {isActive && selected === `func-${fn.index}` ? 'bg-blue-600/30' : ''}"
-                            onclick={() => { onSelectModule(modIndex); onSelectFunction(fn); }}
+                            onclick={() => { onSelectModule(modIndex); onSelectFunction(fn); explorerEl?.focus(); }}
                             oncontextmenu={(e) => showFnContextMenu(e, fn, mod.path)}
                           >
                             <span class="w-3" style="color: var(--icon-import);">{fnBookmarked ? '★' : 'f'}</span>

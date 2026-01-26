@@ -45,15 +45,25 @@ func DecompileWithMappings(fn *wasm.ResolvedFunction, module *wasm.ResolvedModul
 		mappings: make(map[int][]uint64),
 	}
 
-	mc.writeLine(formatSignature(fn, ctx) + " {")
+	var funcStartOffset uint64
+	var funcEndOffset uint64
+	if fn.Body != nil {
+		funcStartOffset = uint64(fn.Body.Offset)
+		if len(fn.Body.Instructions) > 0 {
+			funcEndOffset = fn.Body.Instructions[len(fn.Body.Instructions)-1].Offset
+		}
+	}
+
+	mc.writeLineWithOffsets(formatSignature(fn, ctx)+" {", []uint64{funcStartOffset})
 
 	body := BuildStatements(fn, module)
 	SimplifyBody(body)
 	RecoverLoops(body)
+	RecoverIfElse(body)
 	CollapseSwitchBlocks(body)
 	mc.writeBodyMapped(body, 1)
 
-	mc.writeLine("}")
+	mc.writeLineWithOffsets("}", []uint64{funcEndOffset})
 
 	result := &DecompileResult{
 		Code:     mc.b.String(),
@@ -101,7 +111,7 @@ func (mc *mappingCodegen) writeBodyMapped(body *FuncBody, indent int) {
 
 	if body.Return != nil {
 		prefix := strings.Repeat("  ", indent)
-		mc.writeLine(fmt.Sprintf("%sreturn %s", prefix, exprStr(body.Return, mc.ctx)))
+		mc.writeLineWithOffsets(fmt.Sprintf("%sreturn %s", prefix, exprStr(body.Return, mc.ctx)), body.ReturnOffsets)
 	}
 }
 
@@ -138,31 +148,31 @@ func (mc *mappingCodegen) writeStmtMapped(stmt Stmt, indent int) {
 		if s.Cond != nil {
 			cond = exprStr(s.Cond, mc.ctx)
 		}
-		mc.writeLine(fmt.Sprintf("%sif %s {", prefix, cond))
+		mc.writeLineWithOffsets(fmt.Sprintf("%sif %s {", prefix, cond), []uint64{s.SrcOffset})
 		for _, inner := range s.Then {
 			mc.writeStmtMapped(inner, indent+1)
 		}
 		if len(s.Else) > 0 {
-			mc.writeLine(fmt.Sprintf("%s} else {", prefix))
+			mc.writeLineWithOffsets(fmt.Sprintf("%s} else {", prefix), []uint64{s.SrcOffset})
 			for _, inner := range s.Else {
 				mc.writeStmtMapped(inner, indent+1)
 			}
 		}
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), []uint64{s.EndOffset})
 
 	case *LoopStmt:
-		mc.writeLine(fmt.Sprintf("%sloop L%d {", prefix, s.Label))
+		mc.writeLineWithOffsets(fmt.Sprintf("%sloop L%d {", prefix, s.Label), []uint64{s.SrcOffset})
 		for _, inner := range s.Body {
 			mc.writeStmtMapped(inner, indent+1)
 		}
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), []uint64{s.EndOffset})
 
 	case *BlockStmt:
-		mc.writeLine(fmt.Sprintf("%sblock L%d {", prefix, s.Label))
+		mc.writeLineWithOffsets(fmt.Sprintf("%sblock L%d {", prefix, s.Label), []uint64{s.SrcOffset})
 		for _, inner := range s.Body {
 			mc.writeStmtMapped(inner, indent+1)
 		}
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), []uint64{s.EndOffset})
 
 	case *BreakStmt:
 		if s.Cond != nil {
@@ -174,36 +184,39 @@ func (mc *mappingCodegen) writeStmtMapped(stmt Stmt, indent int) {
 	case *SwitchStmt:
 		mc.writeLineWithOffsets(fmt.Sprintf("%sswitch %s {", prefix, exprStr(s.Value, mc.ctx)), s.Offsets)
 		for i, label := range s.Cases {
-			mc.writeLine(fmt.Sprintf("%s  case %d: break L%d", prefix, i, label))
+			mc.writeLineWithOffsets(fmt.Sprintf("%s  case %d: break L%d", prefix, i, label), offsetsWithSubIndex(s.Offsets, i+1))
 		}
-		mc.writeLine(fmt.Sprintf("%s  default: break L%d", prefix, s.Default))
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s  default: break L%d", prefix, s.Default), offsetsWithSubIndex(s.Offsets, len(s.Cases)+1))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), offsetsWithSubIndex(s.Offsets, len(s.Cases)+2))
 
 	case *FlatSwitchStmt:
-		mc.writeLine(fmt.Sprintf("%sswitch %s {", prefix, exprStr(s.Value, mc.ctx)))
+		mc.writeLineWithOffsets(fmt.Sprintf("%sswitch %s {", prefix, exprStr(s.Value, mc.ctx)), s.Offsets)
+		subIdx := 1
 		for _, c := range s.Cases {
-			mc.writeLine(fmt.Sprintf("%scase %d:", prefix, c.Value))
+			mc.writeLineWithOffsets(fmt.Sprintf("%scase %d:", prefix, c.Value), offsetsWithSubIndex(s.Offsets, subIdx))
+			subIdx++
 			for _, inner := range c.Body {
 				mc.writeStmtMapped(inner, indent+1)
 			}
 		}
 		if len(s.Default) > 0 {
-			mc.writeLine(fmt.Sprintf("%sdefault:", prefix))
+			mc.writeLineWithOffsets(fmt.Sprintf("%sdefault:", prefix), offsetsWithSubIndex(s.Offsets, subIdx))
+			subIdx++
 			for _, inner := range s.Default {
 				mc.writeStmtMapped(inner, indent+1)
 			}
 		}
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), offsetsWithSubIndex(s.Offsets, subIdx))
 
 	case *WhileStmt:
-		mc.writeLine(fmt.Sprintf("%swhile %s {", prefix, exprStr(s.Cond, mc.ctx)))
+		mc.writeLineWithOffsets(fmt.Sprintf("%swhile %s {", prefix, exprStr(s.Cond, mc.ctx)), s.Offsets)
 		for _, inner := range s.Body {
 			mc.writeStmtMapped(inner, indent+1)
 		}
-		mc.writeLine(fmt.Sprintf("%s}", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%s}", prefix), s.Offsets)
 
 	case *ContinueStmt:
-		mc.writeLine(fmt.Sprintf("%scontinue", prefix))
+		mc.writeLineWithOffsets(fmt.Sprintf("%scontinue", prefix), s.Offsets)
 
 	case *ErrorStmt:
 		mc.writeLine(fmt.Sprintf("%s// ERROR at 0x%x: %s", prefix, s.Offset, s.Message))
@@ -465,4 +478,17 @@ func callStr(c *CallExpr, ctx *codegenCtx) string {
 		args += exprStr(arg, ctx)
 	}
 	return fmt.Sprintf("%s(%s)", name, args)
+}
+
+func offsetsWithSubIndex(offsets []uint64, subIndex int) []uint64 {
+	if len(offsets) == 0 {
+		return nil
+	}
+	result := make([]uint64, len(offsets))
+	for i, offset := range offsets {
+		// Encode sub-index in upper 16 bits (bits 48-63)
+		// This preserves the original offset in the lower 48 bits
+		result[i] = offset | (uint64(subIndex) << 48)
+	}
+	return result
 }

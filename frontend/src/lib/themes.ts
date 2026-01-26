@@ -349,12 +349,12 @@ export function applyTheme(theme: Theme) {
   root.style.setProperty('--icon-group', c.iconGroup);
 }
 
-export function createEditorTheme(theme: Theme) {
+export function createEditorTheme(theme: Theme, fontSize: number = 13) {
   const c = theme.colors;
   return EditorView.theme({
     '&': {
       height: '100%',
-      fontSize: '13px',
+      fontSize: `${fontSize}px`,
       backgroundColor: c.editorBg,
       color: c.editorFg,
     },
@@ -431,9 +431,9 @@ export function createHighlightStyle(theme: Theme) {
   ]);
 }
 
-export function getEditorExtensions(theme: Theme) {
+export function getEditorExtensions(theme: Theme, fontSize: number = 13) {
   return [
-    createEditorTheme(theme),
+    createEditorTheme(theme, fontSize),
     syntaxHighlighting(createHighlightStyle(theme)),
   ];
 }

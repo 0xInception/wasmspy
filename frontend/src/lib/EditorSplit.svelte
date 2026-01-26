@@ -18,12 +18,20 @@
     onGotoAddress,
     onGotoFunction,
     onShowXRefs,
+    onRenameFunction,
+    onAddComment,
     functions,
     functionsByName,
+    nicknames,
+    disasmComments,
+    decompileComments,
+    decompileMappings,
     onLeftSelectionChange,
     onRightSelectionChange,
     leftHighlightLines,
     rightHighlightLines,
+    virtualizationThreshold,
+    fontSize,
   }: {
     leftContent: string | null;
     rightContent: string | null;
@@ -40,12 +48,20 @@
     onGotoAddress?: (addr: number) => void;
     onGotoFunction?: (index: number) => void;
     onShowXRefs?: (index: number) => void;
+    onRenameFunction?: (index: number) => void;
+    onAddComment?: (offset: number, comment: string, isDecompile: boolean) => void;
     functions?: { index: number; name: string }[];
     functionsByName?: Map<string, { index: number; name: string }>;
+    nicknames?: Map<number, string>;
+    disasmComments?: Map<number, string>;
+    decompileComments?: Map<number, string>;
+    decompileMappings?: { byLine: Map<number, number[]> } | null;
     onLeftSelectionChange?: (startLine: number, endLine: number) => void;
     onRightSelectionChange?: (startLine: number, endLine: number) => void;
     leftHighlightLines?: number[] | null;
     rightHighlightLines?: number[] | null;
+    virtualizationThreshold?: number;
+    fontSize?: number;
   } = $props();
 
   let splitRatio = $state(0.5);
@@ -54,7 +70,7 @@
 
   onMount(() => {
     const saved = localStorage.getItem('editorSplitRatio');
-    if (saved) splitRatio = Math.max(0.2, Math.min(0.8, parseFloat(saved)));
+    if (saved) splitRatio = Math.max(0.05, Math.min(0.95, parseFloat(saved)));
   });
 
   function startDrag(e: MouseEvent) {
@@ -68,7 +84,7 @@
     if (!dragging || !container) return;
     const rect = container.getBoundingClientRect();
     const newRatio = (e.clientX - rect.left) / rect.width;
-    splitRatio = Math.max(0.2, Math.min(0.8, newRatio));
+    splitRatio = Math.max(0.05, Math.min(0.95, newRatio));
   }
 
   function stopDrag() {
@@ -83,9 +99,31 @@
     return code.replace(/\s*\/\/\s*@0x[0-9a-fA-F]+$/gm, '');
   }
 
-  let displayLeftContent = $derived(
-    leftContent && !showOffsets ? stripOffsetComments(leftContent) : leftContent
-  );
+  function injectComments(code: string, mappings: { byLine: Map<number, number[]> } | null | undefined, comments: Map<number, string> | undefined): string {
+    if (!mappings || !comments || comments.size === 0) return code;
+    const lines = code.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const lineNum = i + 1;
+      const offsets = mappings.byLine.get(lineNum);
+      if (offsets) {
+        for (const offset of offsets) {
+          const comment = comments.get(offset);
+          if (comment) {
+            lines[i] = lines[i] + '  // ' + comment;
+            break;
+          }
+        }
+      }
+    }
+    return lines.join('\n');
+  }
+
+  let displayLeftContent = $derived.by(() => {
+    if (!leftContent) return leftContent;
+    let result = showOffsets ? leftContent : stripOffsetComments(leftContent);
+    result = injectComments(result, decompileMappings, decompileComments);
+    return result;
+  });
 </script>
 
 <svelte:window onmousemove={onMouseMove} onmouseup={stopDrag} />
@@ -117,11 +155,17 @@
             {onGotoAddress}
             {onGotoFunction}
             {onShowXRefs}
+            {onRenameFunction}
+            onAddComment={onAddComment ? (offset, comment) => onAddComment(offset, comment, true) : undefined}
             {functions}
             {functionsByName}
+            {nicknames}
+            lineMappings={decompileMappings?.byLine}
             onSelectionChange={onLeftSelectionChange}
             highlightLines={leftHighlightLines}
             onShowDisassembly={!showRight ? onShowRight : undefined}
+            {virtualizationThreshold}
+            {fontSize}
           />
         </div>
       </div>
@@ -163,11 +207,16 @@
             {onGotoAddress}
             {onGotoFunction}
             {onShowXRefs}
+            {onRenameFunction}
+            onAddComment={onAddComment ? (offset, comment) => onAddComment(offset, comment, false) : undefined}
             {functions}
             {functionsByName}
+            {nicknames}
             onSelectionChange={onRightSelectionChange}
             highlightLines={rightHighlightLines}
             onShowDecompile={!showLeft ? onShowLeft : undefined}
+            {virtualizationThreshold}
+            {fontSize}
           />
         </div>
       </div>

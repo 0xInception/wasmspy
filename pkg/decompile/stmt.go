@@ -16,6 +16,7 @@ type Block struct {
 	Result     wasm.ValType
 	ThenResult Expr
 	StackDepth int
+	StartOffset uint64
 }
 
 type BlockKind int
@@ -31,18 +32,24 @@ type IfStmt struct {
 	Then      []Stmt
 	Else      []Stmt
 	SrcOffset uint64
+	EndOffset uint64
+	Offsets   []uint64
 }
 
 type LoopStmt struct {
 	Label     int
 	Body      []Stmt
 	SrcOffset uint64
+	EndOffset uint64
+	Offsets   []uint64
 }
 
 type BlockStmt struct {
 	Label     int
 	Body      []Stmt
 	SrcOffset uint64
+	EndOffset uint64
+	Offsets   []uint64
 }
 
 type BreakStmt struct {
@@ -63,9 +70,10 @@ func (*BlockStmt) stmt() {}
 func (*BreakStmt) stmt() {}
 
 type FuncBody struct {
-	Stmts  []Stmt
-	Return Expr
-	Errors []DecompileError
+	Stmts         []Stmt
+	Return        Expr
+	ReturnOffsets []uint64
+	Errors        []DecompileError
 }
 
 type DecompileError struct {
@@ -109,14 +117,17 @@ func (b *stmtBuilder) build() *FuncBody {
 	}
 
 	var ret Expr
+	var retOffsets []uint64
 	if len(b.stack) > 0 {
 		ret = ValueToExpr(b.stack[0])
+		retOffsets = CollectValueOffsets(b.stack[0])
 	}
 
 	return &FuncBody{
-		Stmts:  b.stmts,
-		Return: ret,
-		Errors: b.errors,
+		Stmts:         b.stmts,
+		Return:        ret,
+		ReturnOffsets: retOffsets,
+		Errors:        b.errors,
 	}
 }
 
@@ -134,10 +145,11 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		b.labelID++
 		result := parseBlockType(instr)
 		b.blocks = append(b.blocks, &Block{
-			Kind:       BlockPlain,
-			Label:      b.labelID,
-			Result:     result,
-			StackDepth: len(b.stack),
+			Kind:        BlockPlain,
+			Label:       b.labelID,
+			Result:      result,
+			StackDepth:  len(b.stack),
+			StartOffset: instr.Offset,
 		})
 		b.unreachable = false
 
@@ -145,10 +157,11 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		b.labelID++
 		result := parseBlockType(instr)
 		b.blocks = append(b.blocks, &Block{
-			Kind:       BlockLoop,
-			Label:      b.labelID,
-			Result:     result,
-			StackDepth: len(b.stack),
+			Kind:        BlockLoop,
+			Label:       b.labelID,
+			Result:      result,
+			StackDepth:  len(b.stack),
+			StartOffset: instr.Offset,
 		})
 		b.unreachable = false
 
@@ -157,12 +170,13 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 		result := parseBlockType(instr)
 		cond := b.pop()
 		b.blocks = append(b.blocks, &Block{
-			Kind:       BlockIf,
-			Label:      b.labelID,
-			Cond:       ValueToExpr(cond),
-			Stmts:      []Stmt{},
-			Result:     result,
-			StackDepth: len(b.stack),
+			Kind:        BlockIf,
+			Label:       b.labelID,
+			Cond:        ValueToExpr(cond),
+			Stmts:       []Stmt{},
+			Result:      result,
+			StackDepth:  len(b.stack),
+			StartOffset: instr.Offset,
 		})
 		b.unreachable = false
 
@@ -213,12 +227,31 @@ func (b *stmtBuilder) processInstr(instr *wasm.Instruction) {
 			switch block.Kind {
 			case BlockPlain:
 				if len(block.Stmts) > 0 {
-					stmt = &BlockStmt{Label: block.Label, Body: block.Stmts}
+					stmt = &BlockStmt{
+						Label:     block.Label,
+						Body:      block.Stmts,
+						SrcOffset: block.StartOffset,
+						EndOffset: instr.Offset,
+						Offsets:   []uint64{block.StartOffset, instr.Offset},
+					}
 				}
 			case BlockLoop:
-				stmt = &LoopStmt{Label: block.Label, Body: block.Stmts}
+				stmt = &LoopStmt{
+					Label:     block.Label,
+					Body:      block.Stmts,
+					SrcOffset: block.StartOffset,
+					EndOffset: instr.Offset,
+					Offsets:   []uint64{block.StartOffset, instr.Offset},
+				}
 			case BlockIf:
-				stmt = &IfStmt{Cond: block.Cond, Then: block.Else, Else: block.Stmts}
+				stmt = &IfStmt{
+					Cond:      block.Cond,
+					Then:      block.Else,
+					Else:      block.Stmts,
+					SrcOffset: block.StartOffset,
+					EndOffset: instr.Offset,
+					Offsets:   []uint64{block.StartOffset, instr.Offset},
+				}
 			}
 
 			if stmt != nil {

@@ -126,11 +126,15 @@ const (
 	OpF64Le Opcode = 0x64
 	OpF64Ge Opcode = 0x65
 
-	OpI32WrapI64      Opcode = 0xa7
-	OpI64ExtendI32S   Opcode = 0xac
-	OpI64ExtendI32U   Opcode = 0xad
+	OpI32WrapI64        Opcode = 0xa7
+	OpI64ExtendI32S     Opcode = 0xac
+	OpI64ExtendI32U     Opcode = 0xad
 	OpI64ReinterpretF64 Opcode = 0xbd
 	OpF64ReinterpretI64 Opcode = 0xbf
+
+	OpRefNull   Opcode = 0xd0
+	OpRefIsNull Opcode = 0xd1
+	OpRefFunc   Opcode = 0xd2
 
 	OpMiscPrefix Opcode = 0xfc
 
@@ -284,6 +288,10 @@ var OpcodeNames = map[Opcode]string{
 	0xad: "i64.extend_i32_u",
 	0xbd: "i64.reinterpret_f64",
 	0xbf: "f64.reinterpret_i64",
+
+	0xd0: "ref.null",
+	0xd1: "ref.is_null",
+	0xd2: "ref.func",
 
 	0xfc00: "i32.trunc_sat_f32_s",
 	0xfc01: "i32.trunc_sat_f32_u",

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { EditorState, Prec, RangeSetBuilder, StateField, StateEffect, Compartment, type Extension, type RangeSet } from '@codemirror/state';
   import { EditorView, lineNumbers, keymap, drawSelection, Decoration } from '@codemirror/view';
   import { defaultKeymap, selectAll } from '@codemirror/commands';
@@ -8,7 +9,8 @@
   import { getTheme, getEditorExtensions } from './themes';
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte';
 
-  const NO_VIRTUALIZATION_THRESHOLD = 1500;
+  const DEFAULT_VIRTUALIZATION_THRESHOLD = 3000;
+  const DEFAULT_FONT_SIZE = 13;
 
   function getCurrentFuncIndex(): number | null {
     // Parse function index from first line: ";; Function 123: name" or "func name(...)"
@@ -26,24 +28,35 @@
     return null;
   }
 
-  let { content, mode = 'disasm', onGotoAddress, onGotoFunction, onShowXRefs, functions, functionsByName, onLineClick, onSelectionChange, highlightLines, onShowDecompile, onShowDisassembly }: {
+  let { content, mode = 'disasm', onGotoAddress, onGotoFunction, onShowXRefs, onRenameFunction, onAddComment, functions, functionsByName, nicknames, lineMappings, onLineClick, onSelectionChange, highlightLines, onShowDecompile, onShowDisassembly, virtualizationThreshold = DEFAULT_VIRTUALIZATION_THRESHOLD, fontSize = DEFAULT_FONT_SIZE }: {
     content: string;
     mode?: 'disasm' | 'wat' | 'decompile';
     onGotoAddress?: (addr: number) => void;
     onGotoFunction?: (index: number) => void;
     onShowXRefs?: (index: number) => void;
+    onRenameFunction?: (index: number) => void;
+    onAddComment?: (offset: number, comment: string) => void;
     functions?: { index: number; name: string }[];
     functionsByName?: Map<string, { index: number; name: string }>;
+    nicknames?: Map<number, string>;
+    lineMappings?: Map<number, number[]>;
     onLineClick?: (lineNumber: number) => void;
     onSelectionChange?: (startLine: number, endLine: number) => void;
     highlightLines?: number[] | null;
     onShowDecompile?: () => void;
     onShowDisassembly?: () => void;
+    virtualizationThreshold?: number;
+    fontSize?: number;
   } = $props();
 
   let container: HTMLDivElement;
   let view: EditorView | null = null;
+  let lastContent: string = '';
   let contextMenu: { x: number; y: number; items: MenuItem[] } | null = $state(null);
+  let tooltip: { x: number; y: number; text: string } | null = $state(null);
+  let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
+  let commentInput: { offset: number; x: number; y: number; value: string } | null = $state(null);
+  let commentInputEl: HTMLInputElement | null = null;
 
   function getLineCount(text: string): number {
     let count = 1;
@@ -386,6 +399,17 @@
       items.push({ label: 'View references', action: () => onShowXRefs(currentFuncIdx) });
     }
 
+    if (currentFuncIdx !== null && onRenameFunction) {
+      items.push({ label: 'Add nickname', action: () => onRenameFunction(currentFuncIdx) });
+    }
+
+    if (onAddComment) {
+      const offset = getOffsetAtCursor();
+      if (offset !== null) {
+        items.push({ label: 'Add comment', action: () => showCommentInput(offset) });
+      }
+    }
+
     if (onShowDecompile) {
       items.push({ label: 'Show Decompile', action: onShowDecompile });
     }
@@ -437,6 +461,38 @@
     }
   }
 
+  function getOffsetAtCursor(): number | null {
+    if (!view) return null;
+    const sel = view.state.selection.main;
+    const line = view.state.doc.lineAt(sel.head);
+    const lineNum = line.number;
+    const text = line.text;
+    if (mode === 'disasm') {
+      const match = text.match(/^([0-9a-fA-F]+):/);
+      if (match) return parseInt(match[1], 16);
+    } else if (mode === 'decompile' && lineMappings) {
+      const offsets = lineMappings.get(lineNum);
+      if (offsets && offsets.length > 0) return offsets[0];
+    }
+    return null;
+  }
+
+  function showCommentInput(offset: number) {
+    if (!view) return;
+    const sel = view.state.selection.main;
+    const coords = view.coordsAtPos(sel.head);
+    if (coords) {
+      commentInput = { offset, x: coords.left, y: coords.top, value: '' };
+    }
+  }
+
+  function submitComment() {
+    if (commentInput && commentInput.value.trim() && onAddComment) {
+      onAddComment(commentInput.offset, commentInput.value.trim());
+    }
+    commentInput = null;
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'F12' && onGotoFunction) {
       const fnIndex = getFunctionAtCursor();
@@ -445,10 +501,48 @@
         e.preventDefault();
       }
     }
+    if (e.key === ';' && onAddComment) {
+      const offset = getOffsetAtCursor();
+      if (offset !== null) {
+        e.preventDefault();
+        showCommentInput(offset);
+      }
+    }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'Home' || e.key === 'End') {
       setTimeout(() => notifySelectionChange(), 0);
     }
   }
+
+  function handleMouseMove(e: MouseEvent) {
+    if (!nicknames || nicknames.size === 0) return;
+    if (hoverTimeout) clearTimeout(hoverTimeout);
+    tooltip = null;
+    hoverTimeout = setTimeout(() => {
+      const fnIndex = getFunctionAtPosition(e.clientX, e.clientY);
+      if (fnIndex !== null) {
+        const nickname = nicknames.get(fnIndex);
+        if (nickname) {
+          tooltip = { x: e.clientX, y: e.clientY - 30, text: nickname };
+        }
+      }
+    }, 200);
+  }
+
+  function handleMouseLeave() {
+    if (hoverTimeout) {
+      clearTimeout(hoverTimeout);
+      hoverTimeout = null;
+    }
+    tooltip = null;
+  }
+
+  onDestroy(() => {
+    if (hoverTimeout) clearTimeout(hoverTimeout);
+    if (view) {
+      view.destroy();
+      view = null;
+    }
+  });
 
   const highlightLineDeco = Decoration.line({ class: 'cm-highlight-line' });
   const highlightCompartment = new Compartment();
@@ -459,10 +553,25 @@
 
   $effect(() => {
     if (!container) return;
-    if (view) view.destroy();
+
+    if (view && view.dom.parentElement === container) {
+      if (lastContent !== content) {
+        view.dispatch({
+          changes: { from: 0, to: lastContent.length, insert: content }
+        });
+        lastContent = content;
+      }
+      return;
+    }
+
+    if (view) {
+      view.destroy();
+      view = null;
+    }
+
     const theme = getTheme();
     const lineCount = getLineCount(content);
-    const useStaticHighlighting = lineCount < NO_VIRTUALIZATION_THRESHOLD;
+    const useStaticHighlighting = lineCount < virtualizationThreshold;
 
     const extensions = [
       Prec.high(keymap.of([
@@ -472,7 +581,7 @@
       ])),
       lineNumbers(),
       drawSelection(),
-      ...getEditorExtensions(theme),
+      ...getEditorExtensions(theme, fontSize),
       EditorState.readOnly.of(true),
       search(),
       highlightTheme,
@@ -492,10 +601,28 @@
       }),
       parent: container,
     });
+    lastContent = content;
+
+    return () => {
+      if (view) {
+        view.destroy();
+        view = null;
+      }
+    };
   });
+
+  let lastHighlightLines: number[] | null = null;
 
   $effect(() => {
     if (!view) return;
+
+    const same = lastHighlightLines === highlightLines ||
+      (lastHighlightLines && highlightLines &&
+       lastHighlightLines.length === highlightLines.length &&
+       lastHighlightLines.every((v, i) => v === highlightLines![i]));
+    if (same) return;
+    lastHighlightLines = highlightLines ? [...highlightLines] : null;
+
     if (highlightLines && highlightLines.length > 0) {
       const decorations: any[] = [];
       let firstLineFrom: number | null = null;
@@ -522,10 +649,40 @@
       view.dispatch({ effects: highlightCompartment.reconfigure([]) });
     }
   });
+
+  $effect(() => {
+    if (commentInput && commentInputEl) {
+      commentInputEl.focus();
+    }
+  });
 </script>
 
-<div bind:this={container} class="h-full overflow-hidden" onclick={handleClick} oncontextmenu={handleContextMenu} onkeydown={handleKeydown} role="presentation" tabindex="-1"></div>
+<div bind:this={container} class="h-full overflow-hidden" onclick={handleClick} oncontextmenu={handleContextMenu} onkeydown={handleKeydown} onmousemove={handleMouseMove} onmouseleave={handleMouseLeave} role="presentation" tabindex="-1"></div>
 
 {#if contextMenu}
   <ContextMenu items={contextMenu.items} x={contextMenu.x} y={contextMenu.y} onClose={() => contextMenu = null} />
+{/if}
+
+{#if tooltip}
+  <div class="fixed px-2 py-1 text-xs rounded shadow-lg pointer-events-none z-50" style="left: {tooltip.x}px; top: {tooltip.y}px; background: var(--panel-bg); color: var(--syntax-function); border: 1px solid var(--panel-border);">
+    {tooltip.text}
+  </div>
+{/if}
+
+{#if commentInput}
+  <div class="fixed z-50" style="left: {commentInput.x}px; top: {commentInput.y}px;">
+    <input
+      bind:this={commentInputEl}
+      type="text"
+      class="px-2 py-1 text-xs rounded outline-none"
+      style="background: var(--editor-bg); color: var(--editor-fg); border: 1px solid var(--button-active); min-width: 200px;"
+      placeholder="; comment"
+      bind:value={commentInput.value}
+      onkeydown={(e) => {
+        if (e.key === 'Enter') submitComment();
+        if (e.key === 'Escape') commentInput = null;
+        e.stopPropagation();
+      }}
+    />
+  </div>
 {/if}

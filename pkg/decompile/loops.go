@@ -18,20 +18,23 @@ func recoverLoopsInStmt(stmt Stmt) Stmt {
 		if w := tryConvertToWhile(s); w != nil {
 			return w
 		}
-		return &BlockStmt{Label: s.Label, Body: recoverLoopsInStmts(s.Body)}
+		return &BlockStmt{Label: s.Label, Body: recoverLoopsInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 
 	case *LoopStmt:
-		return &LoopStmt{Label: s.Label, Body: recoverLoopsInStmts(s.Body)}
+		return &LoopStmt{Label: s.Label, Body: recoverLoopsInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 
 	case *IfStmt:
 		return &IfStmt{
-			Cond: s.Cond,
-			Then: recoverLoopsInStmts(s.Then),
-			Else: recoverLoopsInStmts(s.Else),
+			Cond:      s.Cond,
+			Then:      recoverLoopsInStmts(s.Then),
+			Else:      recoverLoopsInStmts(s.Else),
+			SrcOffset: s.SrcOffset,
+			EndOffset: s.EndOffset,
+			Offsets:   s.Offsets,
 		}
 
 	case *WhileStmt:
-		return &WhileStmt{Cond: s.Cond, Body: recoverLoopsInStmts(s.Body)}
+		return &WhileStmt{Cond: s.Cond, Body: recoverLoopsInStmts(s.Body), Offsets: s.Offsets}
 	}
 	return stmt
 }
@@ -62,7 +65,7 @@ func tryConvertToWhile(block *BlockStmt) *WhileStmt {
 
 	body = convertBreaksInLoop(body, loop.Label, block.Label)
 
-	return &WhileStmt{Cond: cond, Body: body}
+	return &WhileStmt{Cond: cond, Body: body, Offsets: block.Offsets}
 }
 
 func negateCond(e Expr) Expr {
@@ -113,32 +116,93 @@ func convertBreakInStmt(stmt Stmt, loopLabel, blockLabel int) Stmt {
 	case *BreakStmt:
 		if s.Label == loopLabel {
 			if s.Cond != nil {
-				return &IfStmt{Cond: s.Cond, Then: []Stmt{&ContinueStmt{}}}
+				return &IfStmt{Cond: s.Cond, Then: []Stmt{&ContinueStmt{Offsets: s.Offsets}}, Offsets: s.Offsets}
 			}
-			return &ContinueStmt{}
+			return &ContinueStmt{Offsets: s.Offsets}
 		}
 		if s.Label == blockLabel {
 			if s.Cond != nil {
-				return &IfStmt{Cond: s.Cond, Then: []Stmt{&BreakStmt{Label: 0, Offsets: s.Offsets}}}
+				return &IfStmt{Cond: s.Cond, Then: []Stmt{&BreakStmt{Label: 0, Offsets: s.Offsets}}, Offsets: s.Offsets}
 			}
 			return &BreakStmt{Label: 0, Offsets: s.Offsets}
 		}
 
 	case *IfStmt:
 		return &IfStmt{
-			Cond: s.Cond,
-			Then: convertBreaksInLoop(s.Then, loopLabel, blockLabel),
-			Else: convertBreaksInLoop(s.Else, loopLabel, blockLabel),
+			Cond:      s.Cond,
+			Then:      convertBreaksInLoop(s.Then, loopLabel, blockLabel),
+			Else:      convertBreaksInLoop(s.Else, loopLabel, blockLabel),
+			SrcOffset: s.SrcOffset,
+			EndOffset: s.EndOffset,
+			Offsets:   s.Offsets,
 		}
 
 	case *LoopStmt:
-		return &LoopStmt{Label: s.Label, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel)}
+		return &LoopStmt{Label: s.Label, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 
 	case *BlockStmt:
-		return &BlockStmt{Label: s.Label, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel)}
+		return &BlockStmt{Label: s.Label, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 
 	case *WhileStmt:
-		return &WhileStmt{Cond: s.Cond, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel)}
+		return &WhileStmt{Cond: s.Cond, Body: convertBreaksInLoop(s.Body, loopLabel, blockLabel), Offsets: s.Offsets}
 	}
 	return stmt
+}
+
+func RecoverIfElse(body *FuncBody) {
+	body.Stmts = recoverIfElseInStmts(body.Stmts)
+}
+
+func recoverIfElseInStmts(stmts []Stmt) []Stmt {
+	result := make([]Stmt, 0, len(stmts))
+	for _, stmt := range stmts {
+		result = append(result, recoverIfElseInStmt(stmt))
+	}
+	return result
+}
+
+func recoverIfElseInStmt(stmt Stmt) Stmt {
+	switch s := stmt.(type) {
+	case *BlockStmt:
+		if converted := tryConvertBlockToIf(s); converted != nil {
+			return converted
+		}
+		return &BlockStmt{Label: s.Label, Body: recoverIfElseInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
+
+	case *LoopStmt:
+		return &LoopStmt{Label: s.Label, Body: recoverIfElseInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
+
+	case *IfStmt:
+		return &IfStmt{
+			Cond:      s.Cond,
+			Then:      recoverIfElseInStmts(s.Then),
+			Else:      recoverIfElseInStmts(s.Else),
+			SrcOffset: s.SrcOffset,
+			EndOffset: s.EndOffset,
+			Offsets:   s.Offsets,
+		}
+
+	case *WhileStmt:
+		return &WhileStmt{Cond: s.Cond, Body: recoverIfElseInStmts(s.Body), Offsets: s.Offsets}
+	}
+	return stmt
+}
+
+func tryConvertBlockToIf(block *BlockStmt) Stmt {
+	if len(block.Body) < 2 {
+		return nil
+	}
+	brk, ok := block.Body[0].(*BreakStmt)
+	if !ok || brk.Cond == nil || brk.Label != block.Label {
+		return nil
+	}
+	thenBody := recoverIfElseInStmts(block.Body[1:])
+	return &IfStmt{
+		Cond:      negateCond(brk.Cond),
+		Then:      thenBody,
+		Else:      nil,
+		SrcOffset: block.SrcOffset,
+		EndOffset: block.EndOffset,
+		Offsets:   block.Offsets,
+	}
 }

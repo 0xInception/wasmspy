@@ -39,10 +39,12 @@ type Instruction struct {
 type ValType byte
 
 const (
-	ValI32 ValType = 0x7F
-	ValI64 ValType = 0x7E
-	ValF32 ValType = 0x7D
-	ValF64 ValType = 0x7C
+	ValI32       ValType = 0x7F
+	ValI64       ValType = 0x7E
+	ValF32       ValType = 0x7D
+	ValF64       ValType = 0x7C
+	ValFuncRef   ValType = 0x70
+	ValExternRef ValType = 0x6F
 )
 
 func (v ValType) String() string {
@@ -55,6 +57,10 @@ func (v ValType) String() string {
 		return "f32"
 	case ValF64:
 		return "f64"
+	case ValFuncRef:
+		return "funcref"
+	case ValExternRef:
+		return "externref"
 	default:
 		return "unknown"
 	}

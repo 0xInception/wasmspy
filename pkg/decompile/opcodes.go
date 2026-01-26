@@ -129,6 +129,10 @@ var OpSignatures = map[wasm.Opcode]Signature{
 	wasm.OpMemorySize: {Outputs: []wasm.ValType{i32}},
 	wasm.OpMemoryGrow: {Inputs: []wasm.ValType{i32}, Outputs: []wasm.ValType{i32}},
 
+	wasm.OpRefNull:   {Outputs: []wasm.ValType{wasm.ValFuncRef}},
+	wasm.OpRefIsNull: {Inputs: []wasm.ValType{wasm.ValFuncRef}, Outputs: []wasm.ValType{i32}},
+	wasm.OpRefFunc:   {Outputs: []wasm.ValType{wasm.ValFuncRef}},
+
 	wasm.OpBr:   {},
 	wasm.OpBrIf: {Inputs: []wasm.ValType{i32}},
 

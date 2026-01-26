@@ -218,19 +218,19 @@ func collapseSwitchInStmt(stmt Stmt) Stmt {
 		if flat := tryCollapseSwitch(s); flat != nil {
 			return flat
 		}
-		return &BlockStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body)}
+		return &BlockStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 	case *IfStmt:
-		return &IfStmt{Cond: s.Cond, Then: collapseSwitchInStmts(s.Then), Else: collapseSwitchInStmts(s.Else)}
+		return &IfStmt{Cond: s.Cond, Then: collapseSwitchInStmts(s.Then), Else: collapseSwitchInStmts(s.Else), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 	case *LoopStmt:
-		return &LoopStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body)}
+		return &LoopStmt{Label: s.Label, Body: collapseSwitchInStmts(s.Body), SrcOffset: s.SrcOffset, EndOffset: s.EndOffset, Offsets: s.Offsets}
 	case *WhileStmt:
-		return &WhileStmt{Cond: s.Cond, Body: collapseSwitchInStmts(s.Body)}
+		return &WhileStmt{Cond: s.Cond, Body: collapseSwitchInStmts(s.Body), Offsets: s.Offsets}
 	case *FlatSwitchStmt:
 		cases := make([]SwitchCase, len(s.Cases))
 		for i, c := range s.Cases {
 			cases[i] = SwitchCase{Value: c.Value, Body: collapseSwitchInStmts(c.Body)}
 		}
-		return &FlatSwitchStmt{Value: s.Value, Cases: cases, Default: collapseSwitchInStmts(s.Default)}
+		return &FlatSwitchStmt{Value: s.Value, Cases: cases, Default: collapseSwitchInStmts(s.Default), Offsets: s.Offsets}
 	}
 	return stmt
 }
@@ -294,6 +294,7 @@ func tryCollapseSwitch(outerBlock *BlockStmt) *FlatSwitchStmt {
 		Value:   sw.Value,
 		Cases:   cases,
 		Default: defaultBody,
+		Offsets: sw.Offsets,
 	}
 }
 
@@ -311,15 +312,15 @@ func extractCaseBody(stmts []Stmt, outerLabel int) []Stmt {
 func simplifyStmt(s Stmt) Stmt {
 	switch v := s.(type) {
 	case *AssignStmt:
-		return &AssignStmt{Target: v.Target, Value: Simplify(v.Value), Offsets: v.Offsets}
+		return &AssignStmt{Target: v.Target, Value: Simplify(v.Value), SrcOffset: v.SrcOffset, Offsets: v.Offsets}
 	case *StoreStmt:
-		return &StoreStmt{Op: v.Op, Addr: Simplify(v.Addr), Value: Simplify(v.Value), Offset: v.Offset, Offsets: v.Offsets}
+		return &StoreStmt{Op: v.Op, Addr: Simplify(v.Addr), Value: Simplify(v.Value), Offset: v.Offset, SrcOffset: v.SrcOffset, Offsets: v.Offsets}
 	case *ReturnStmt:
 		if v.Value != nil {
-			return &ReturnStmt{Value: Simplify(v.Value), Offsets: v.Offsets}
+			return &ReturnStmt{Value: Simplify(v.Value), SrcOffset: v.SrcOffset, Offsets: v.Offsets}
 		}
 	case *DropStmt:
-		return &DropStmt{Value: Simplify(v.Value), Offsets: v.Offsets}
+		return &DropStmt{Value: Simplify(v.Value), SrcOffset: v.SrcOffset, Offsets: v.Offsets}
 	case *IfStmt:
 		then := make([]Stmt, len(v.Then))
 		for i := range v.Then {
@@ -331,24 +332,24 @@ func simplifyStmt(s Stmt) Stmt {
 		}
 		cond := Simplify(v.Cond)
 		if len(then) == 0 && len(els) > 0 {
-			return &IfStmt{Cond: negateCond(cond), Then: els, Else: nil}
+			return &IfStmt{Cond: negateCond(cond), Then: els, Else: nil, SrcOffset: v.SrcOffset, EndOffset: v.EndOffset, Offsets: v.Offsets}
 		}
-		return &IfStmt{Cond: cond, Then: then, Else: els}
+		return &IfStmt{Cond: cond, Then: then, Else: els, SrcOffset: v.SrcOffset, EndOffset: v.EndOffset, Offsets: v.Offsets}
 	case *LoopStmt:
 		body := make([]Stmt, len(v.Body))
 		for i := range v.Body {
 			body[i] = simplifyStmt(v.Body[i])
 		}
-		return &LoopStmt{Label: v.Label, Body: body}
+		return &LoopStmt{Label: v.Label, Body: body, SrcOffset: v.SrcOffset, EndOffset: v.EndOffset, Offsets: v.Offsets}
 	case *BlockStmt:
 		body := make([]Stmt, len(v.Body))
 		for i := range v.Body {
 			body[i] = simplifyStmt(v.Body[i])
 		}
-		return &BlockStmt{Label: v.Label, Body: body}
+		return &BlockStmt{Label: v.Label, Body: body, SrcOffset: v.SrcOffset, EndOffset: v.EndOffset, Offsets: v.Offsets}
 	case *BreakStmt:
 		if v.Cond != nil {
-			return &BreakStmt{Label: v.Label, Cond: Simplify(v.Cond), Offsets: v.Offsets}
+			return &BreakStmt{Label: v.Label, Cond: Simplify(v.Cond), SrcOffset: v.SrcOffset, Offsets: v.Offsets}
 		}
 	case *SwitchStmt:
 		return &SwitchStmt{Value: Simplify(v.Value), Cases: v.Cases, Default: v.Default, Offsets: v.Offsets}
@@ -365,13 +366,13 @@ func simplifyStmt(s Stmt) Stmt {
 		for i := range v.Default {
 			def[i] = simplifyStmt(v.Default[i])
 		}
-		return &FlatSwitchStmt{Value: Simplify(v.Value), Cases: cases, Default: def}
+		return &FlatSwitchStmt{Value: Simplify(v.Value), Cases: cases, Default: def, Offsets: v.Offsets}
 	case *WhileStmt:
 		body := make([]Stmt, len(v.Body))
 		for i := range v.Body {
 			body[i] = simplifyStmt(v.Body[i])
 		}
-		return &WhileStmt{Cond: Simplify(v.Cond), Body: body}
+		return &WhileStmt{Cond: Simplify(v.Cond), Body: body, Offsets: v.Offsets}
 	}
 	return s
 }

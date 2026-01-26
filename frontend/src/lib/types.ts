@@ -74,3 +74,16 @@ export interface ModuleErrorsInfo {
   totalErrors: number;
   uniqueErrors: Record<string, number>;
 }
+
+export interface FunctionAnnotation {
+  name?: string;
+  comment?: string;
+}
+
+export interface Annotations {
+  version: number;
+  functions?: Record<string, FunctionAnnotation>;
+  comments?: Record<string, string>;
+  decompileComments?: Record<string, string>;
+  bookmarks?: number[];
+}

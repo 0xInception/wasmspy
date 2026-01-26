@@ -262,6 +262,22 @@ func DisassembleCode(code []byte, baseOffset int) ([]Instruction, error) {
 			}
 			pc += n
 			instr.Immediates = append(instr.Immediates, tableIdx)
+
+		case OpRefNull:
+			if pc >= len(code) {
+				return nil, newError(ErrTruncated, int64(baseOffset+pc), "unexpected end reading ref.null heaptype")
+			}
+			heapType := code[pc]
+			pc++
+			instr.Immediates = append(instr.Immediates, heapType)
+
+		case OpRefFunc:
+			funcIdx, n, err := ReadLEB128U32FromSlice(code[pc:])
+			if err != nil {
+				return nil, wrapError(ErrInvalidLEB128, int64(baseOffset+pc), err, "invalid ref.func index")
+			}
+			pc += n
+			instr.Immediates = append(instr.Immediates, funcIdx)
 		}
 
 		instructions = append(instructions, instr)
