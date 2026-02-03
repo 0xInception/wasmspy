@@ -18,6 +18,8 @@ export interface Settings {
   defaultShowDisassembly: boolean;
   fontSize: number;
   windowSize: WindowSize;
+  syncSelection: boolean;
+  syncScroll: boolean;
 }
 
 export const defaultSettings: Settings = {
@@ -26,6 +28,8 @@ export const defaultSettings: Settings = {
   defaultShowDisassembly: true,
   fontSize: 13,
   windowSize: '1080p',
+  syncSelection: true,
+  syncScroll: true,
 };
 
 export function loadSettings(): Settings {

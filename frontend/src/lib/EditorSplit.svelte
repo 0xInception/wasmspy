@@ -32,6 +32,9 @@
     rightHighlightLines,
     virtualizationThreshold,
     fontSize,
+    onLeftFocus,
+    onRightFocus,
+    syncScroll,
   }: {
     leftContent: string | null;
     rightContent: string | null;
@@ -62,6 +65,9 @@
     rightHighlightLines?: number[] | null;
     virtualizationThreshold?: number;
     fontSize?: number;
+    onLeftFocus?: () => void;
+    onRightFocus?: () => void;
+    syncScroll?: boolean;
   } = $props();
 
   let splitRatio = $state(0.5);
@@ -166,6 +172,8 @@
             onShowDisassembly={!showRight ? onShowRight : undefined}
             {virtualizationThreshold}
             {fontSize}
+            onFocus={onLeftFocus}
+            {syncScroll}
           />
         </div>
       </div>
@@ -217,6 +225,8 @@
             onShowDecompile={!showLeft ? onShowLeft : undefined}
             {virtualizationThreshold}
             {fontSize}
+            onFocus={onRightFocus}
+            {syncScroll}
           />
         </div>
       </div>

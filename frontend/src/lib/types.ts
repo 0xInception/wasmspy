@@ -87,3 +87,57 @@ export interface Annotations {
   decompileComments?: Record<string, string>;
   bookmarks?: number[];
 }
+
+export type GroupedFunctions = [string, FunctionInfo[]][];
+
+export interface LoadedModule {
+  path: string;
+  name: string;
+  info: ModuleInfo;
+  functionsById: Map<number, FunctionInfo>;
+  functionsByName: Map<string, FunctionInfo>;
+  groupedFunctions: GroupedFunctions;
+  groupedImports: GroupedFunctions;
+  annotations: Annotations;
+}
+
+export interface LineMapping {
+  line: number;
+  offsets: number[];
+}
+
+export interface DecompileMappingsIndexed {
+  byLine: Map<number, number[]>;
+  byOffset: Map<number, number[]>;
+}
+
+export interface DisasmMappings {
+  offsetToLine: Map<number, number>;
+  lineToOffset: Map<number, number>;
+}
+
+export interface CachedFunction {
+  decompileCode: string;
+  decompileMappings: DecompileMappingsIndexed | null;
+  disasmContent: string;
+  disasmMappings: DisasmMappings;
+}
+
+export interface OpenTab {
+  id: string;
+  title: string;
+  icon: string;
+  type: 'function' | 'memory';
+  modulePath: string;
+  index: number;
+  decompileContent: string | null;
+  decompileMappings: DecompileMappingsIndexed | null;
+  decompileLineCount: number;
+  disasmContent: string | null;
+  disasmMappings: DisasmMappings | null;
+  disasmLineCount: number;
+  showLeft: boolean;
+  showRight: boolean;
+  showOffsets: boolean;
+  disasmIndent: boolean;
+}

@@ -1,19 +1,6 @@
 <script lang="ts">
-  import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark, Annotations } from './types';
+  import type { FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark, LoadedModule } from './types';
   import ContextMenu, { type MenuItem } from './ContextMenu.svelte';
-
-  type GroupedFunctions = [string, FunctionInfo[]][];
-
-  interface LoadedModule {
-    path: string;
-    name: string;
-    info: ModuleInfo;
-    functionsById: Map<number, FunctionInfo>;
-    functionsByName: Map<string, FunctionInfo>;
-    groupedFunctions: GroupedFunctions;
-    groupedImports: GroupedFunctions;
-    annotations: Annotations;
-  }
 
   let {
     modules,

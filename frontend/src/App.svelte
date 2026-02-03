@@ -3,7 +3,7 @@
   import { LoadModuleFromPath, DisassembleFunction, DecompileFunctionWithMappings, GetFunctionWAT, OpenFileDialog, GetXRefs, GetModuleErrors, GetAnnotations, SetFunctionName, SetOffsetComment, SetBookmarks, SaveAnnotations, ClearAnnotations, ExportAnnotationsToFile, ImportAnnotationsFromFile, SetWindowSize } from '../wailsjs/go/main/App';
   import { Quit } from '../wailsjs/runtime/runtime';
   import { EventsOn } from '../wailsjs/runtime/runtime';
-  import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark, XRefInfo, ModuleErrorsInfo, Annotations } from './lib/types';
+  import type { ModuleInfo, FunctionInfo, MemoryInfo, TableInfo, GlobalInfo, ExportInfo, Bookmark, XRefInfo, ModuleErrorsInfo, Annotations, LoadedModule, GroupedFunctions, OpenTab, LineMapping, DecompileMappingsIndexed, DisasmMappings, CachedFunction } from './lib/types';
   import Explorer from './lib/Explorer.svelte';
   import EditorSplit from './lib/EditorSplit.svelte';
   import HexView from './lib/HexView.svelte';
@@ -14,6 +14,8 @@
   import { applyTheme, defaultTheme } from './lib/themes';
   import SettingsModal from './lib/SettingsModal.svelte';
   import { loadSettings, saveSettings, windowSizePresets, type Settings } from './lib/settings';
+  import XRefsPanel from './lib/XRefsPanel.svelte';
+  import QuitConfirmDialog from './lib/QuitConfirmDialog.svelte';
 
   applyTheme(defaultTheme);
 
@@ -26,19 +28,6 @@
       }
     }
   });
-
-  type GroupedFunctions = [string, FunctionInfo[]][];
-
-  interface LoadedModule {
-    path: string;
-    name: string;
-    info: ModuleInfo;
-    functionsById: Map<number, FunctionInfo>;
-    functionsByName: Map<string, FunctionInfo>;
-    groupedFunctions: GroupedFunctions;
-    groupedImports: GroupedFunctions;
-    annotations: Annotations;
-  }
 
   function buildFunctionMaps(functions: FunctionInfo[] | null | undefined): { byId: Map<number, FunctionInfo>; byName: Map<string, FunctionInfo> } {
     const byId = new Map<number, FunctionInfo>();
@@ -72,32 +61,6 @@
     return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }
 
-  interface LineMapping {
-    line: number;
-    offsets: number[];
-  }
-
-  interface DecompileMappingsIndexed {
-    byLine: Map<number, number[]>;
-    byOffset: Map<number, number[]>;
-  }
-
-  interface OpenTab extends Tab {
-    type: 'function' | 'memory';
-    modulePath: string;
-    index: number;
-    decompileContent: string | null;
-    decompileMappings: DecompileMappingsIndexed | null;
-    decompileLineCount: number;
-    disasmContent: string | null;
-    disasmMappings: DisasmMappings | null;
-    disasmLineCount: number;
-    showLeft: boolean;
-    showRight: boolean;
-    showOffsets: boolean;
-    disasmIndent: boolean;
-  }
-
   let modules: LoadedModule[] = $state([]);
   let activeModuleIndex: number = $state(-1);
   let error = $state('');
@@ -120,12 +83,6 @@
   let showSettings = $state(false);
   let settings: Settings = $state(loadSettings());
 
-  interface CachedFunction {
-    decompileCode: string;
-    decompileMappings: DecompileMappingsIndexed | null;
-    disasmContent: string;
-    disasmMappings: DisasmMappings;
-  }
   let functionCache: Map<string, CachedFunction> = $state(new Map());
 
   function getFunctionErrorCount(modulePath: string, funcIndex: number): number {
@@ -474,11 +431,6 @@
     }
   }
 
-  interface DisasmMappings {
-    offsetToLine: Map<number, number>;
-    lineToOffset: Map<number, number>;
-  }
-
   function countLines(text: string): number {
     let count = 1;
     for (let i = 0; i < text.length; i++) {
@@ -755,6 +707,7 @@
   }
 
   function handleLeftSelectionChange(startLine: number, endLine: number) {
+    if (!settings.syncSelection) return;
     if (!activeTab?.decompileContent || !activeTab?.disasmContent) return;
 
     if (activeTab.decompileMappings && activeTab.disasmMappings) {
@@ -783,6 +736,7 @@
   }
 
   function handleRightSelectionChange(startLine: number, endLine: number) {
+    if (!settings.syncSelection) return;
     if (!activeTab?.decompileContent || !activeTab?.disasmContent || !activeTab?.disasmMappings) return;
 
     if (activeTab.decompileMappings) {
@@ -955,45 +909,18 @@
                   rightHighlightLines={tab.id === activeTabId ? rightHighlightLines : null}
                   virtualizationThreshold={settings.virtualizationThreshold}
                   fontSize={settings.fontSize}
+                  onLeftFocus={() => { rightHighlightLines = null; }}
+                  onRightFocus={() => { leftHighlightLines = null; }}
+                  syncScroll={settings.syncScroll}
                 />
               </div>
               {#if xrefs && tab.id === activeTabId}
-                <div class="w-64 flex-shrink-0 text-xs overflow-auto" style="background: var(--sidebar-bg); border-left: 1px solid var(--panel-border);">
-                  <div class="flex items-center justify-between px-3 py-2" style="border-bottom: 1px solid var(--panel-border);">
-                    <span style="color: var(--sidebar-fg);">References</span>
-                    <button class="opacity-60 hover:opacity-100" style="color: var(--sidebar-fg);" onclick={closeXRefs}>×</button>
-                  </div>
-                  <div class="px-3 py-2" style="color: var(--sidebar-fg);">
-                    <div class="truncate mb-3" style="color: var(--syntax-function);">{xrefsFuncName}</div>
-                    {#if xrefs.callers.length > 0}
-                      <div class="mb-3">
-                        <div class="opacity-60 mb-1">Called by ({xrefs.callers.length})</div>
-                        {#each xrefs.callers as caller}
-                          <button
-                            class="block hover:underline truncate text-left w-full py-0.5"
-                            style="color: var(--syntax-function);"
-                            onclick={() => gotoFunction(caller.index)}
-                          >{caller.name}</button>
-                        {/each}
-                      </div>
-                    {/if}
-                    {#if xrefs.callees.length > 0}
-                      <div>
-                        <div class="opacity-60 mb-1">Calls ({xrefs.callees.length})</div>
-                        {#each xrefs.callees as callee}
-                          <button
-                            class="block hover:underline truncate text-left w-full py-0.5"
-                            style="color: var(--syntax-function);"
-                            onclick={() => gotoFunction(callee.index)}
-                          >{callee.name}</button>
-                        {/each}
-                      </div>
-                    {/if}
-                    {#if xrefs.callers.length === 0 && xrefs.callees.length === 0}
-                      <div class="opacity-60">No references found</div>
-                    {/if}
-                  </div>
-                </div>
+                <XRefsPanel
+                  {xrefs}
+                  funcName={xrefsFuncName}
+                  onClose={closeXRefs}
+                  onGotoFunction={gotoFunction}
+                />
               {/if}
             </div>
           {/if}
@@ -1029,30 +956,11 @@
 {/if}
 
 {#if showQuitConfirm}
-  <div class="fixed inset-0 flex items-center justify-center z-50" style="background: rgba(0,0,0,0.5);">
-    <div class="p-4 rounded-lg shadow-xl" style="background: var(--sidebar-bg); border: 1px solid var(--panel-border); min-width: 320px;">
-      <div class="text-sm mb-4" style="color: var(--sidebar-fg);">
-        You have unsaved changes. Do you want to save before quitting?
-      </div>
-      <div class="flex justify-end gap-2">
-        <button
-          class="px-3 py-1.5 text-xs rounded"
-          style="background: var(--panel-bg); color: var(--sidebar-fg); border: 1px solid var(--panel-border);"
-          onclick={() => showQuitConfirm = false}
-        >Cancel</button>
-        <button
-          class="px-3 py-1.5 text-xs rounded"
-          style="background: var(--color-error); color: white;"
-          onclick={handleQuitWithoutSave}
-        >Don't Save</button>
-        <button
-          class="px-3 py-1.5 text-xs rounded"
-          style="background: var(--button-active); color: white;"
-          onclick={handleQuitWithSave}
-        >Save & Quit</button>
-      </div>
-    </div>
-  </div>
+  <QuitConfirmDialog
+    onCancel={() => showQuitConfirm = false}
+    onQuitWithoutSave={handleQuitWithoutSave}
+    onSaveAndQuit={handleQuitWithSave}
+  />
 {/if}
 
 {#if showSettings}

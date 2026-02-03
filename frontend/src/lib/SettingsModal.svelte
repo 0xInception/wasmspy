@@ -89,6 +89,22 @@
       </div>
 
       <div>
+        <label class="block text-xs mb-2" style="color: var(--sidebar-fg); opacity: 0.7;">
+          Selection sync
+        </label>
+        <div class="space-y-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" bind:checked={localSettings.syncSelection} class="w-4 h-4" />
+            <span class="text-sm" style="color: var(--sidebar-fg);">Highlight matching code in opposite panel</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer" class:opacity-50={!localSettings.syncSelection}>
+            <input type="checkbox" bind:checked={localSettings.syncScroll} disabled={!localSettings.syncSelection} class="w-4 h-4" />
+            <span class="text-sm" style="color: var(--sidebar-fg);">Auto-scroll to matched location</span>
+          </label>
+        </div>
+      </div>
+
+      <div>
         <label class="block text-xs mb-1.5" style="color: var(--sidebar-fg); opacity: 0.7;">
           Default window size
         </label>
